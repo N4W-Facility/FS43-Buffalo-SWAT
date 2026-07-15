@@ -1,0 +1,46 @@
+{
+  "app.title": "SWAT Wetlands",
+
+  "config.title": "Configuración",
+  "config.executable_path": "Ejecutable SWAT (rev670_64rel.exe)",
+  "config.base_models_root": "Carpeta de modelos calibrados",
+  "config.workspace_root": "Carpeta de trabajo de escenarios",
+  "config.browse": "Examinar...",
+  "config.save": "Guardar configuración",
+  "config.error.invalid_executable": "La ruta no apunta a un ejecutable válido.",
+  "config.error.missing_path": "Debes seleccionar esta ruta antes de continuar.",
+
+  "watershed.select": "Selecciona una cuenca",
+  "watershed.select_placeholder": "Elige una cuenca...",
+
+  "scenario.new": "Nuevo escenario",
+  "scenario.name": "Nombre del escenario",
+  "scenario.subbasin": "Subcuenca",
+  "scenario.run": "Ejecutar escenario",
+  "scenario.running": "Ejecutando SWAT...",
+  "scenario.status.pending": "Pendiente",
+  "scenario.status.running": "En ejecución",
+  "scenario.status.done": "Completado",
+  "scenario.status.error": "Error",
+  "scenario.error.swat_failed": "SWAT terminó con error (código {exit_code}). Revisa el log de la corrida.",
+  "scenario.error.parse_failed": "No se pudieron leer las salidas de la corrida.",
+
+  "wetland.form.title": "Parámetros de humedal",
+  "wetland.wet_fr": "Fracción de subcuenca que drena al humedal (WET_FR)",
+  "wetland.wet_nsa": "Área a nivel normal, ha (WET_NSA)",
+  "wetland.wet_nvol": "Volumen a nivel normal, 10⁴ m³ (WET_NVOL)",
+  "wetland.wet_mxsa": "Área máxima, ha (WET_MXSA)",
+  "wetland.wet_mxvol": "Volumen máximo, 10⁴ m³ (WET_MXVOL)",
+  "wetland.wet_vol": "Volumen inicial, 10⁴ m³ (WET_VOL)",
+  "wetland.wet_k": "Conductividad hidráulica del fondo, mm/hr (WET_K)",
+
+  "compare.baseline": "Línea base",
+  "compare.scenario": "Escenario",
+  "compare.flow": "Caudal",
+  "compare.sediment": "Sedimento",
+  "compare.nutrients": "Nutrientes",
+  "compare.baseline_missing": "La línea base aún no se ha ejecutado para esta cuenca.",
+
+  "action.cancel": "Cancelar",
+  "action.confirm": "Confirmar"
+}

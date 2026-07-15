@@ -1,0 +1,64 @@
+# Formulario de edición de parámetros de humedal sobre la copia de trabajo
+# del escenario (.pnd). "default: null" significa: usar el valor ya presente
+# en la copia de trabajo, no un valor físico inventado.
+#
+# Rangos marcados "verify_range: true" son cotas de validez física (>=0,
+# fracción en [0,1]) y deben confirmarse contra la documentación de
+# SWAT2012 I/O antes de exponerlos como límite estricto en producción.
+
+form: wetland_pond
+fields:
+  - id: wet_fr
+    param: WET_FR
+    type: float
+    label_key: wetland.wet_fr
+    range: [0.0, 1.0]
+    default: null
+
+  - id: wet_nsa
+    param: WET_NSA
+    type: float
+    label_key: wetland.wet_nsa
+    range: [0.0, null]
+    default: null
+    verify_range: true
+
+  - id: wet_nvol
+    param: WET_NVOL
+    type: float
+    label_key: wetland.wet_nvol
+    range: [0.0, null]
+    default: null
+    verify_range: true
+
+  - id: wet_mxsa
+    param: WET_MXSA
+    type: float
+    label_key: wetland.wet_mxsa
+    range: [0.0, null]
+    default: null
+    verify_range: true
+
+  - id: wet_mxvol
+    param: WET_MXVOL
+    type: float
+    label_key: wetland.wet_mxvol
+    range: [0.0, null]
+    default: null
+    verify_range: true
+
+  - id: wet_vol
+    param: WET_VOL
+    type: float
+    label_key: wetland.wet_vol
+    range: [0.0, null]
+    default: null
+    verify_range: true
+
+  - id: wet_k
+    param: WET_K
+    type: float
+    label_key: wetland.wet_k
+    range: [0.0, null]
+    default: null
+    verify_range: true
