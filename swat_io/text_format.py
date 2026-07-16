@@ -33,3 +33,29 @@ def parse_value_code_file(path: Path) -> dict[str, str]:
             if match:
                 values[match.group("code")] = match.group("value")
     return values
+
+
+def write_value_code_file(path: Path, updates: dict[str, float]) -> None:
+    """Reescribe, sobre el mismo archivo, solo el valor numérico de las
+    líneas cuyo CODIGO está en updates.
+
+    El resto de cada línea (separador, código, descripción, salto de
+    línea) queda exactamente igual. El nuevo valor se formatea con 3
+    decimales, justificado a la derecha dentro del ancho de campo que ya
+    tenía esa línea (no se asume un ancho fijo global).
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+
+    new_lines = []
+    for line in lines:
+        match = _LINE_PATTERN.match(line)
+        if match and match.group("code") in updates:
+            width = match.end("value")
+            new_value = updates[match.group("code")]
+            formatted = f"{new_value:>{width}.3f}"
+            line = formatted + line[match.end("value"):]
+        new_lines.append(line)
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
