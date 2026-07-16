@@ -33,10 +33,10 @@ class ConfigManager:
     def __init__(
         self,
         resources_dir: Path = RESOURCES_DIR,
-        config_file: Path = DEFAULT_CONFIG_FILE,
+        config_file: Path | None = None,
     ) -> None:
         self._resources_dir = resources_dir
-        self._config_file = config_file
+        self._config_file = config_file if config_file is not None else DEFAULT_CONFIG_FILE
         self.theme: dict = {}
         self.strings: dict = {}
         self.paths: AppPaths = AppPaths()

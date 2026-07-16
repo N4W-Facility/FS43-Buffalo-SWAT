@@ -74,6 +74,9 @@
     "button_color": ["#DCE6EF", "#DCE6EF"],
     "button_hover_color": ["#2F6690", "#2F6690"]
   },
+  "CTkScrollableFrame": {
+    "label_fg_color": ["#EAF3FB", "#EAF3FB"]
+  },
   "CTkTabview": {
     "corner_radius": 10,
     "border_width": 0,
