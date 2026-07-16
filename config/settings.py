@@ -20,9 +20,13 @@ class AppPaths:
     swat_executable: Path | None = None
     base_models_root: Path | None = None
     workspace_root: Path | None = None
+    target_executable_name: str = "swatUser.exe"
 
     def is_complete(self) -> bool:
         return all([self.swat_executable, self.base_models_root, self.workspace_root])
+
+
+_PATH_FIELDS = ("swat_executable", "base_models_root", "workspace_root")
 
 
 class ConfigManager:
@@ -42,6 +46,9 @@ class ConfigManager:
         self.strings = self._load_json(self._resources_dir / "strings" / "es.json")
         self.paths = self._load_paths()
 
+    def theme_path(self) -> Path:
+        return self._resources_dir / "theme" / "swat_light.json"
+
     def load_layout(self, form_name: str) -> dict:
         import yaml
 
@@ -54,7 +61,9 @@ class ConfigManager:
 
     def save_paths(self, paths: AppPaths) -> None:
         self._config_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {k: (str(v) if v is not None else None) for k, v in asdict(paths).items()}
+        data = asdict(paths)
+        for field in _PATH_FIELDS:
+            data[field] = str(data[field]) if data[field] is not None else None
         with self._config_file.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         self.paths = paths
@@ -63,7 +72,13 @@ class ConfigManager:
         if not self._config_file.exists():
             return AppPaths()
         data = self._load_json(self._config_file)
-        return AppPaths(**{k: (Path(v) if v else None) for k, v in data.items()})
+        kwargs: dict = {}
+        for field in _PATH_FIELDS:
+            value = data.get(field)
+            kwargs[field] = Path(value) if value else None
+        if data.get("target_executable_name"):
+            kwargs["target_executable_name"] = data["target_executable_name"]
+        return AppPaths(**kwargs)
 
     @staticmethod
     def _load_json(path: Path) -> dict:
@@ -71,3 +86,12 @@ class ConfigManager:
             return {}
         with path.open("r", encoding="utf-8") as f:
             return json.load(f)
+
+
+def validate_app_paths(swat_executable: Path, base_models_root: Path, workspace_root: Path) -> str | None:
+    """Devuelve una clave de error de es.json si alguna ruta es inválida, o None si todas lo son."""
+    if not Path(swat_executable).is_file():
+        return "config.error.invalid_executable"
+    if not Path(base_models_root).is_dir() or not Path(workspace_root).is_dir():
+        return "config.error.invalid_directory"
+    return None
