@@ -1,9 +1,14 @@
 # CLAUDE.md
 
-Contexto de proyecto para Claude Code. Este documento es la fuente de verdad
-sobre alcance, restricciones y convenciones. Ante cualquier ambigüedad,
-las restricciones técnicas y los límites del asistente tienen prioridad
-sobre la conveniencia de implementación.
+## Reglas de colaboración obligatorias (no negociables)
+
+- **Cero código sin autorización explícita**: el asistente no debe escribir
+  ni una sola línea de código (ni crear/editar archivos de código) sin que
+  el usuario lo autorice explícitamente para esa tarea puntual. Discutir,
+  proponer y diseñar sí; implementar no, hasta recibir luz verde.
+- **Optimizar uso de tokens**: respuestas breves y directas, sin exploración
+  de archivos ni tool calls innecesarios, sin resúmenes largos ni
+  reexplicar contexto ya conocido.
 
 ## Resumen del proyecto
 
@@ -24,6 +29,61 @@ trabajo es tres cosas:
 El valor del producto está en la usabilidad de la orquestación y la calidad
 de la visualización comparativa, no en el cómputo hidrológico en sí.
 
+## Estado actual de la implementación
+
+La interfaz (`ui/`) fue reconstruida desde cero (agosto 2026) y `main.py`
+arranca una app funcional de tres pestañas. Dependencia nueva: **matplotlib**
+(en el env conda `swat`), usada solo por `viz/land_use_chart.py`, sin
+`pyplot` (se construye `Figure` directo y se embebe con
+`FigureCanvasTkAgg`, para no arrastrar el estado global de pyplot en una
+app de escritorio).
+
+- **`ui/app.py`**: ventana raíz, tema `resources/theme/swat_light.json`,
+  `TabBar` propia (`ui/tabs.py`, no `CTkTabview`) con soporte de
+  pestañas deshabilitadas hasta que haya un proyecto abierto.
+- **Pestaña Project** (`ui/tab_project.py`): abrir/cambiar carpeta de
+  proyecto (cualquier carpeta con `TxtInOut/` directo — hoy la app **no
+  distingue** entre modelo de referencia calibrado y copia de escenario,
+  ver aviso de aislamiento más abajo), editar metadata (`project.json`).
+- **Pestaña Summary** (`ui/tab_summary.py`): corre en hilo de fondo
+  (patrón obligatorio de la sección siguiente) los resúmenes de wetlands
+  (`swat_io.summary.summarize_project`) y HRU/land-use
+  (`generar_resumen_coberturas.build_land_use_summary`), cachea resultados
+  en `project.json`, y agrega un tercer bloque "Gráficas": barra de
+  coberturas por subcuenca (o total de cuenca) con selector, construida
+  sobre `land_use_by_subbasin.csv`.
+- **Pestaña Wetlands (.pnd)** (`ui/tab_wetlands.py` + `ui/wetland_editor_window.py`):
+  tabla de solo lectura (`ttk.Treeview`, no CTk — necesario para scroll
+  nativo en ambos ejes con muchas subcuencas) con los 20 parámetros de
+  "Wetland inputs" como filas y las subcuencas como columnas, leída en
+  vivo de los `.pnd` reales. El encabezado de cada columna abre
+  `WetlandEditorWindow` preseleccionada en esa subcuenca: campos de solo
+  lectura → botón Edit los habilita → Save pide confirmación (diálogo
+  Guardar/Cancelar) antes de escribir. Al guardar escribe **directo sobre
+  el `.pnd` real** (vía `swat_io.pnd_parser.write_wetland_params`, todavía
+  con los 20 campos) y además reescribe
+  `tool_outputs/wetland_params_draft.csv` (`scenarios/wetland_draft.py`)
+  como respaldo — ese CSV se reconstruye desde los `.pnd` reales cada vez
+  que se abre la ventana, nunca es una segunda fuente de verdad.
+- **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`. Todavía no
+  invoca `swat2012.exe` como subproceso — sigue faltando el paso 2 del
+  resumen del proyecto.
+- **`viz/`**: solo `land_use_chart.py` (coberturas por subcuenca, Summary).
+  Sin empezar: gráficas comparativas línea base vs. escenario (caudal,
+  sedimento, nutrientes) — el motivo original del paquete.
+
+**Aviso importante — deuda técnica aceptada explícitamente:** la
+restricción "Aislamiento por escenario" de la sección siguiente **no está
+enforced por código todavía**. La pestaña Wetlands escribe sobre
+`<proyecto abierto>/TxtInOut/*.pnd` sin verificar si esa carpeta es una
+copia de escenario o el modelo de referencia calibrado. Decisión explícita
+del usuario (2026-07-31): no bloquear esto en código por ahora — quedará
+documentado en un futuro manual de usuario que abrir la carpeta calibrada
+directamente es bajo su propio riesgo. No "arreglar" esto de oficio sin
+que el usuario lo pida — es una elección consciente, no un olvido.
+
+Actualizar este bloque a medida que la interfaz siga creciendo.
+
 ## Restricciones técnicas (no negociables)
 
 - **Motor fijo**: el motor de cómputo es SWAT2012 revisión 670, distribuido
@@ -37,37 +97,15 @@ de la visualización comparativa, no en el cómputo hidrológico en sí.
   (copiar `TxtInOut`, colocar el ejecutable, correr el modelo, leer
   salidas) se hace directamente sobre archivos de texto plano. Cualquier
   ruta de código que abra o dependa de un `.mdb` está fuera de alcance.
-- **Configuración base de solo lectura**: el `TxtInOut` calibrado y validado
-  (`*_calibrated_*`) nunca se edita in situ. Cada escenario opera sobre una
-  copia aislada (carpeta de trabajo propia). La app debe garantizar que no
-  existe ninguna ruta de código que escriba sobre la carpeta base.
 - **Aislamiento por escenario**: cada corrida vive en su propio directorio
   de trabajo, para permitir comparar múltiples escenarios entre sí y contra
   la línea base sin interferencia.
-
-### Secuencia obligatoria antes de ejecutar
-
-1. Copiar el `TxtInOut` base (calibrado/validado, de solo lectura) a una
-   carpeta de escenario aislada.
-2. Aplicar los cambios de parámetros de humedal en el `.pnd` de esa copia.
-3. Colocar el ejecutable `rev670_64rel.exe` dentro de esa carpeta de
-   escenario, **renombrado como `swatUser.exe`** (o el nombre que espere
-   `file.cio` en esa instalación) — el nombre esperado por `file.cio` no
-   debe asumirse fijo en el código; debe leerse o configurarse.
-4. Invocar el ejecutable como subproceso desde esa carpeta de escenario
-   (no desde una ruta global ni desde la carpeta base).
-5. Leer `output.rch`, `output.sub`, `output.hru` y `output.mgt` como texto
-   plano una vez termina la corrida.
-
-Esta secuencia es el contrato entre la capa de orquestación (`engine/` o
-`runner/`) y el resto de la app; ningún otro módulo debe invocar el
-ejecutable ni copiar `TxtInOut` por fuera de ella.
 
 ## Archivos SWAT y su rol
 
 | Archivo | Rol en la app |
 |---|---|
-| `.pnd` (por subcuenca) | Único archivo editable por el usuario. Expone los parámetros de humedal: `WET_FR` (fracción de subcuenca que drena al humedal), `WET_NSA` / `WET_NVOL` (área y volumen a nivel normal), `WET_MXSA` / `WET_MXVOL` (área y volumen máximos), `WET_VOL` (volumen inicial), `WET_K` (conductividad hidráulica del fondo), y parámetros de sedimento asociados al humedal. |
+| `.pnd` (por subcuenca) | Único archivo editable por el usuario. Expone los 20 parámetros de la sección "Wetland inputs": `WET_FR` (fracción de subcuenca que drena al humedal), `WET_NSA` / `WET_NVOL` (área y volumen a nivel normal), `WET_MXSA` / `WET_MXVOL` (área y volumen máximos), `WET_VOL` (volumen inicial), `WET_K` (conductividad hidráulica del fondo), sedimento (`WET_SED`, `WET_NSED`), settling de N/P (`PSETLW1/2`, `NSETLW1/2`), y nutrientes/calidad de agua (`CHLAW`, `SECCIW`, `WET_NO3`, `WET_SOLP`, `WET_ORGN`, `WET_ORGP`, `WETEVCOEFF`). Editable hoy vía la pestaña Wetlands (.pnd) — ver "Estado actual". |
 | `.sub` | Vincula la subcuenca con el HRU/área que drena al humedal. Se lee para construir la UI de selección de subcuencas con humedal; no se edita por escenario. |
 | `.bsn` | Parámetros globales de cuenca. Fuera de alcance: nunca se modifica por escenario. |
 | `.fig` / `.cio` | Topología del watershed y control maestro de la corrida (fechas, opciones de impresión). Se mantienen intactos entre escenarios salvo que el usuario cambie explícitamente el periodo simulado. |
@@ -76,52 +114,68 @@ ejecutable ni copiar `TxtInOut` por fuera de ella.
 | `output.hru` | Balance por unidad de respuesta hidrológica. |
 | `output.mgt` | Operaciones de manejo por HRU; se lee como texto plano junto con las demás salidas. |
 | `output.std` | Resumen general de la corrida. |
+| `.hru` (por HRU) | Parámetros físicos/agronómicos de cada HRU (`HRU_FR`, `SLSUBBSN`, `OV_N`, `CANMX`, `ESCO`, `EPCO`, etc.). Hoy se usa en modo lectura para inventario e informes de cobertura (ver "Módulo swat_io.hru" más abajo); la librería sí soporta escritura controlada para uso técnico/mantenimiento, pero la UI de escenarios todavía no edita `.hru`. |
 
 La app debe tratar el parseo de estos archivos como una capa propia y
 aislada (lectura/escritura de `.pnd`, lectura de salidas), separada de la
 lógica de UI y de la lógica de orquestación del subproceso, para poder
 testear el parseo sin necesidad de ejecutar el binario.
 
-## Flujo funcional esperado
+## Módulo swat_io.hru (inventario y edición técnica de HRUs)
 
-1. El usuario selecciona una configuración SWAT base (`TxtInOut` calibrado).
-2. Define un escenario modificando uno o más parámetros de humedal (`.pnd`)
-   sobre una o varias subcuencas.
-3. La app copia el `TxtInOut` base a un directorio de trabajo del escenario,
-   aplica los cambios sobre los `.pnd` correspondientes, coloca el
-   ejecutable (`rev670_64rel.exe` renombrado como `swatUser.exe`) en esa
-   carpeta y lo ejecuta como subproceso.
-4. La app lee las salidas (`output.rch`, `output.sub`, `output.hru`,
-   `output.mgt`, `output.std`) del escenario y las compara contra la
-   corrida de línea base (sin modificar), visualizando diferencias en
-   caudal, sedimento y nutrientes.
+Ya implementado y con 92 pruebas (`tests/swat_io/hru/`, todas pasando junto
+con el resto del repo). Es una librería de `swat_io`, sin dependencias de UI
+ni del subproceso SWAT. Su parte de solo lectura (inventario y resumen de
+coberturas) se expone vía `generar_resumen_coberturas.py`, invocado en
+hilo de fondo desde la pestaña Summary de la UI (ver "Estado actual").
+Su API de modificación masiva (`HRUSelection`/`HRUModificationRule`,
+ver más abajo) sigue sin conectarse a ningún flujo de la interfaz — queda
+lista para un futuro flujo de edición de HRU.
 
-La línea base debe ejecutarse (o reutilizarse si ya existe una corrida
-cacheada) antes de poder mostrar comparaciones; la app no debe asumir
-salidas de línea base preexistentes sin verificarlas.
+**Qué resuelve:**
 
-## Convención de escenarios y multi-cuenca
+- Lee cualquier `.hru`, preservando su estructura byte a byte en un
+  round-trip sin cambios (encabezados, comentarios, líneas desconocidas,
+  espacios, separador `|`, salto de línea original, codificación
+  UTF-8/UTF-8 con BOM/`cp1252`).
+- Permite consultar y modificar parámetros por nombre
+  (`hru.get_value("CANMX")`, `hru.set_value("CANMX", 12.5)`), cambiando
+  únicamente el campo de valor de la línea modificada; todo lo demás queda
+  intacto.
+- Escanea recursivamente un `TxtInOut` y arma un inventario tabular
+  (pandas) con una fila por HRU, más un resumen de coberturas por
+  subcuenca (`fraction_sum`, `percentage_of_subbasin`) exportable a CSV.
+- Expone una API de modificación masiva controlada (`HRUSelection` +
+  `HRUModificationRule` → `preview_modifications` / `apply_modifications`
+  / `write_modified_hru_files`), pensada para escribir siempre sobre una
+  copia de escenario, nunca sobre la carpeta base.
 
-- **Naming de escenario**: `{Watershed}_{ScenarioAbbreviation}_{timestep}`,
-  extendiendo la convención ya usada en los datos (`Calibrated`, `LS`,
-  `MS`, `HS`, `PS`, `GI`) con abreviaturas propias del módulo de humedales:
-  `WET_LS`, `WET_MS`, `WET_HS` (degradación/mejora en distintos grados).
-  Cualquier generación de nombres de carpeta o de escenario debe respetar
-  este patrón, no inventar uno nuevo.
-- **Origen único**: cada escenario de humedal se construye siempre a partir
-  del `TxtInOut` `*_calibrated_*` de la cuenca correspondiente, nunca a
-  partir de otro escenario ya modificado (no hay escenarios "en cadena").
-- **Proyecto multi-cuenca**: el alcance cubre 9 cuencas — BigSister,
-  Buffalo, Canadaway, Cattaraugus, Chautauqua, Crooked, Eighteenmile,
-  SilverWalnut, Tonawanda. Cada una tiene un subbasin de salida (outlet)
-  específico que debe usarse al extraer resultados de `output.rch`, por
-  ejemplo Buffalo → subbasin 9, Tonawanda → subbasin 37. Este mapeo
-  cuenca→outlet debe modelarse explícitamente (tabla/config), no
-  hardcodearse disperso en el código de graficado.
-- **Procesamiento cuenca por cuenca**: la UI y el flujo de ejecución deben
-  permitir seleccionar y trabajar sobre una cuenca a la vez. Correr las 9
-  cuencas en paralelo o en batch no es un requisito inicial; no diseñar
-  para eso salvo que se pida explícitamente.
+**Ubicación:**
+
+```text
+swat_io/common/   # encoding.py, atomic_write.py, line_parser.py (genéricos, reutilizables por otros parsers)
+swat_io/hru/      # models.py, parser.py, writer.py, scanner.py, summary.py, modifiers.py, validation.py, exceptions.py
+```
+
+**Puntos de entrada:** dos scripts en la raíz del proyecto, funcionales de
+forma independiente a la UI; la interfaz nueva deberá invocarlos en hilo de
+fondo (ver "Operaciones largas y UI no bloqueante") sin bloquear la
+ventana:
+
+- `generar_resumen_coberturas.py` — dado un escenario (carpeta con
+  `TxtInOut/`), genera `land_use_by_subbasin.csv` en su `tool_outputs/`.
+- `generar_resumen_humedales.py` — genera `wetland_summary.csv` (parámetros
+  de humedal por subcuenca, leídos de `.pnd`) en la misma carpeta
+  `tool_outputs/`, vía `swat_io.summary.summarize_project` +
+  `swat_io.tool_outputs.save_wetland_summary`.
+
+**Distinción importante que cualquier feature futura debe respetar:**
+`HRU_FR` (`.hru`, fracción de la subcuenca que ocupa esa HRU) y `WET_FR`
+(`.pnd`, fracción de la subcuenca que drena al humedal) son variables
+independientes y nunca deben combinarse automáticamente.
+
+Documentación técnica completa (decisiones de diseño, supuestos, y qué
+falta validar contra un `.hru` real de rev. 670): `docs/hru_module.md`.
 
 ## Stack y convenciones de código
 
@@ -129,7 +183,13 @@ salidas de línea base preexistentes sin verificarlas.
 - **UI**: CustomTkinter sobre Tkinter.
 - **Separación de capas** (obligatoria, no solo sugerida):
   - `io/` o `swat_io/`: parseo y escritura de archivos SWAT (`.pnd`, `.sub`,
-    lectura de `output.*`). Sin dependencias de UI.
+    `.hru`, lectura de `output.*`). Sin dependencias de UI. Los parsers
+    simples de un solo archivo (`.pnd`, `.sub`) viven como módulo plano en
+    `swat_io/`; un parser con round-trip completo, escáner e inventario
+    (como `.hru`) se organiza en su propio subpaquete (`swat_io/hru/`),
+    con las utilidades genéricas (codificación, escritura atómica, split
+    de líneas) en `swat_io/common/` para que otros parsers futuros las
+    reutilicen en vez de reimplementarlas.
   - `engine/` o `runner/`: gestión de copias de `TxtInOut`, invocación del
     subproceso `swat2012.exe`, captura de stdout/stderr y códigos de salida.
   - `scenarios/`: modelo de datos de un escenario (parámetros modificados,
@@ -149,28 +209,27 @@ salidas de línea base preexistentes sin verificarlas.
   terminó con error" (código de salida, contenido de log) y "no se pudo
   parsear la salida", y comunicar cuál ocurrió al usuario.
 
-## Sistema de diseño
+### Operaciones largas y UI no bloqueante
 
-Estética minimalista tipo Notion, **tema claro** (no oscuro), sobre paleta
-azul institucional SWAT adaptada a fondo claro.
+Cualquier operación que pueda tardar más que unos milisegundos sobre un
+modelo real (copiar `TxtInOut`, parsear miles de `.hru`/`.pnd`, y en el
+futuro correr `swat2012.exe`) **debe** correr en un hilo de fondo
+(`threading.Thread(daemon=True)`) que nunca toca widgets directamente. Este
+proyecto ya se congeló dos veces por saltarse esto — con datos sintéticos
+de prueba una operación de segundos parece instantánea, pero contra un
+modelo real (35k+ archivos) puede tardar 45s+ y congelar toda la ventana.
 
-- Definir la paleta y tipografía como **tokens de diseño reutilizables**
-  (constantes centralizadas), nunca como valores de color sueltos
-  hardcodeados por widget.
-- Paleta funcional:
-  - Azul oscuro SWAT (referencia: logo oficial, azul marino) → acento de
-    marca: encabezados, botones primarios.
-  - Azul medio → elementos interactivos secundarios (inputs activos, links,
-    controles).
-  - Azul muy claro → fondo de paneles/tarjetas.
-  - Verde suave → color complementario para diferenciar escenarios
-    (línea base vs. escenario modificado) en gráficas y estados.
-  - Fondo general blanco / gris claro, sin dominancia del azul oscuro sobre
-    grandes superficies.
-- CustomTkinter para lograr aspecto flat/moderno sobre Tkinter (evitar el
-  aspecto Tkinter clásico por defecto).
-- En gráficas comparativas, mantener consistentemente el mismo color para
-  "línea base" y otro para "escenario" a través de toda la app.
+Patrón obligatorio para cualquier operación larga que la nueva UI dispare:
+
+1. El hilo de fondo nunca llama a `self.after(...)` ni toca ningún widget;
+   solo empuja mensajes a una `queue.Queue`.
+2. El hilo principal sondea la cola con `self.after(intervalo_ms, ...)`.
+3. Cada ciclo de sondeo aplica **solo el último** mensaje de progreso
+   encontrado, descartando los anteriores sin redibujar por cada uno: con
+   archivos reales el hilo de fondo puede encolar mensajes más rápido de lo
+   que la UI alcanza a procesarlos, y redibujar uno por uno hace que el
+   respaldo crezca sin control hasta congelar la ventana igual (el mismo
+   bug, dos capas más abajo).
 
 ## Empaquetado y distribución
 
@@ -200,12 +259,10 @@ Al trabajar en este proyecto, el asistente NO debe:
 - Automatizar SWAT Editor, ni leer/escribir bases `.mdb` (SWATGDB,
   MasterProgress, SWAT2012.mdb, SSURGO). Toda la interacción con datos SWAT
   pasa por archivos de texto plano (`TxtInOut`, `output.*`).
-- Correr múltiples cuencas en paralelo/batch como funcionalidad base, ni
-  construir escenarios encadenados a partir de otros escenarios (siempre
-  desde `*_calibrated_*`).
+- Correr múltiples cuencas en paralelo/batch como funcionalidad base.
 - Modificar archivos fuera del alcance definido por el escenario activo
-  (en particular: nunca escribir sobre el `TxtInOut` base, nunca tocar
-  `.bsn`, nunca alterar `.fig`/`.cio` salvo cambio explícito de periodo
-  simulado pedido por el usuario).
+  (en particular: nunca escribir sobre la carpeta de referencia elegida —
+  calibrada o no —, nunca tocar `.bsn`, nunca alterar `.fig`/`.cio` salvo
+  cambio explícito de periodo simulado pedido por el usuario).
 - Asumir rutas hardcodeadas al binario SWAT o a carpetas de datos del
   usuario; toda ruta sensible a la máquina debe ser configurable.

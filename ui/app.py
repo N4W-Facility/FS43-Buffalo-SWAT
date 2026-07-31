@@ -1,46 +1,58 @@
+"""Ventana raíz: aplica el tema, monta la barra de pestañas, y sincroniza el
+ProjectMetadata activo entre las pestañas Project y Summary.
+"""
 from __future__ import annotations
+
+from pathlib import Path
 
 import customtkinter as ctk
 
 from config.settings import ConfigManager
-from scenarios.models import Project
-from ui.config_dialog import show_config_dialog
-from ui.initial_window import InitialWindowFrame
-from ui.project_window import ProjectWindowFrame
+from scenarios.project import ProjectMetadata
+
+from .tab_project import ProjectTab
+from .tab_summary import SummaryTab
+from .tab_wetlands import WetlandsTab
+from .tabs import TabBar
+
+_WINDOW_SIZE = "980x800"
 
 
 class App(ctk.CTk):
-    def __init__(self) -> None:
-        self.config_manager = ConfigManager()
-        self.config_manager.load_all()
+    def __init__(self, config: ConfigManager) -> None:
+        ctk.set_default_color_theme(str(config.theme_path()))
         ctk.set_appearance_mode("light")
-        ctk.set_default_color_theme(str(self.config_manager.theme_path()))
-
         super().__init__()
-        self.title(self.config_manager.text("app.title"))
-        self.geometry("900x600")
-        self._current_frame: ctk.CTkFrame | None = None
 
-        if not self.config_manager.paths.is_complete():
-            self.withdraw()
-            show_config_dialog(self, self.config_manager, on_saved=self._start)
-        else:
-            self._start()
+        self._config = config
+        colors = config.theme.get("AppPalette", {})
 
-    def _start(self) -> None:
-        self.deiconify()
-        self.show_initial_window()
+        self.title(config.text("app.title"))
+        self.geometry(_WINDOW_SIZE)
+        self.configure(fg_color=colors.get("window_bg"))
 
-    def _set_frame(self, frame: ctk.CTkFrame) -> None:
-        if self._current_frame is not None:
-            self._current_frame.destroy()
-        self._current_frame = frame
-        frame.pack(fill="both", expand=True)
+        self._tab_bar = TabBar(self, config)
+        self._tab_bar.pack(fill="both", expand=True, padx=16, pady=16)
 
-    def show_initial_window(self) -> None:
-        self._set_frame(
-            InitialWindowFrame(self, self.config_manager, on_project_selected=self.show_project_window)
+        self._project_tab = ProjectTab(self._tab_bar, config, on_project_opened=self._on_project_opened)
+        self._summary_tab = SummaryTab(
+            self._tab_bar, config, on_run_state_changed=self._on_summary_run_state_changed
         )
+        self._wetlands_tab = WetlandsTab(self._tab_bar, config)
 
-    def show_project_window(self, project: Project) -> None:
-        self._set_frame(ProjectWindowFrame(self, self.config_manager, project))
+        self._tab_bar.add_tab("project", "tab.project", self._project_tab, enabled=True)
+        self._tab_bar.add_tab("summary", "tab.summary", self._summary_tab, enabled=False)
+        self._tab_bar.add_tab("wetlands", "tab.wetlands", self._wetlands_tab, enabled=False)
+
+    def _on_project_opened(self, project_dir: Path, metadata: ProjectMetadata) -> None:
+        self._tab_bar.set_enabled("summary", True)
+        self._summary_tab.set_project(project_dir, metadata)
+        self._tab_bar.set_enabled("wetlands", True)
+        self._wetlands_tab.set_project(project_dir)
+
+    def _on_summary_run_state_changed(self, running: bool) -> None:
+        """Mientras Summary corre un Run, bloquea toda navegación (pestañas y
+        Open/Change/Edit de Project) para que el usuario no pueda cambiar de
+        proyecto ni de pestaña a mitad de una operación de fondo."""
+        self._tab_bar.set_navigation_locked(running)
+        self._project_tab.set_locked(running)

@@ -1,0 +1,109 @@
+# Formulario de edición de los 20 parámetros de la sección "Wetland
+# inputs" de un .pnd, escritos directamente sobre el archivo real (no una
+# copia) por la ventana de edición de humedales.
+#
+# "verify_range: true" marca campos cuyo límite superior no está
+# confirmado contra la documentación de SWAT2012 I/O: por ahora solo se
+# valida que sean >= 0. Mismo criterio que ya usaba el wetland_pond.yaml
+# original de este proyecto para los 7 campos "core".
+
+form: wetland_params
+fields:
+  - id: wet_fr
+    label_key: wetland.wet_fr
+    range: [0.0, 1.0]
+
+  - id: wet_nsa
+    label_key: wetland.wet_nsa
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_nvol
+    label_key: wetland.wet_nvol
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_mxsa
+    label_key: wetland.wet_mxsa
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_mxvol
+    label_key: wetland.wet_mxvol
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_vol
+    label_key: wetland.wet_vol
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_sed
+    label_key: wetland.wet_sed
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_nsed
+    label_key: wetland.wet_nsed
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_k
+    label_key: wetland.wet_k
+    range: [0.0, null]
+    verify_range: true
+
+  - id: psetlw1
+    label_key: wetland.psetlw1
+    range: [0.0, null]
+    verify_range: true
+
+  - id: psetlw2
+    label_key: wetland.psetlw2
+    range: [0.0, null]
+    verify_range: true
+
+  - id: nsetlw1
+    label_key: wetland.nsetlw1
+    range: [0.0, null]
+    verify_range: true
+
+  - id: nsetlw2
+    label_key: wetland.nsetlw2
+    range: [0.0, null]
+    verify_range: true
+
+  - id: chlaw
+    label_key: wetland.chlaw
+    range: [0.0, null]
+    verify_range: true
+
+  - id: secciw
+    label_key: wetland.secciw
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_no3
+    label_key: wetland.wet_no3
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_solp
+    label_key: wetland.wet_solp
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_orgn
+    label_key: wetland.wet_orgn
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wet_orgp
+    label_key: wetland.wet_orgp
+    range: [0.0, null]
+    verify_range: true
+
+  - id: wetevcoeff
+    label_key: wetland.wetevcoeff
+    range: [0.0, null]
+    verify_range: true

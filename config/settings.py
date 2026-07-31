@@ -43,7 +43,7 @@ class ConfigManager:
 
     def load_all(self) -> None:
         self.theme = self._load_json(self._resources_dir / "theme" / "swat_light.json")
-        self.strings = self._load_json(self._resources_dir / "strings" / "es.json")
+        self.strings = self._load_json(self._resources_dir / "strings" / "en.json")
         self.paths = self._load_paths()
 
     def theme_path(self) -> Path:

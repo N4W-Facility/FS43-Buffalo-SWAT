@@ -1,53 +1,62 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
-from scenarios.draft import draft_csv_path, read_draft
-from scenarios.models import Project
+import pandas as pd
+
 from swat_io.pnd_parser import write_wetland_params
 
-
-@dataclass(frozen=True)
-class ConfigureResult:
-    scenario_dir: Path
-    txtinout_dir: Path
-    params_csv: Path
+ProgressCallback = Callable[[int, int], None]
 
 
-def configure_scenario(
-    project: Project, scenario_name: str, swat_executable: Path, target_executable_name: str
-) -> ConfigureResult:
-    """Materializa un escenario: copia TxtInOut, aplica el borrador a los
-    .pnd de la copia, y coloca el ejecutable configurado.
+def _count_files(directory: Path) -> int:
+    return sum(1 for path in directory.rglob("*") if path.is_file())
 
-    Implementa los pasos 1-3 de la secuencia obligatoria de CLAUDE.md. No
-    invoca el subproceso de SWAT.
+
+def create_working_scenario(
+    project_dir: Path,
+    reference_dir: Path,
+    scenario_name: str,
+    on_progress: ProgressCallback | None = None,
+) -> Path:
+    """Copia toda la carpeta de referencia (TablesIn/TablesOut/TxtInOut/...)
+    a project_dir/scenario_name. La carpeta de referencia nunca se modifica.
+
+    Es el paso 1 de la secuencia obligatoria de CLAUDE.md, disparado por el
+    botón "Cargar" (ver ui/project_window.py). Si se pasa `on_progress`, se
+    llama con (archivos_copiados, total_archivos) después de cada archivo,
+    para que la UI pueda mostrar avance sin bloquear la corrida en un hilo
+    de trabajo.
     """
-    draft_path = draft_csv_path(project, scenario_name)
-    if not draft_path.exists():
-        raise FileNotFoundError(f"No existe un borrador para el escenario {scenario_name!r}.")
-    draft = read_draft(draft_path)
+    scenario_dir = Path(project_dir) / scenario_name
+    if scenario_dir.exists():
+        raise FileExistsError(f"Ya existe una carpeta de escenario para {scenario_name!r}: {scenario_dir}")
 
-    scenario_dir = project.project_dir / scenario_name
-    txtinout_dir = scenario_dir / "TxtInOut"
-    if txtinout_dir.exists():
-        raise FileExistsError(
-            f"Ya existe una carpeta de trabajo para {scenario_name!r}: {txtinout_dir}"
-        )
-    shutil.copytree(project.base_txtinout_dir, txtinout_dir)
+    reference_dir = Path(reference_dir)
+    total_files = _count_files(reference_dir)
+    copied = 0
 
+    def _copy_with_progress(src: str, dst: str) -> None:
+        nonlocal copied
+        shutil.copy2(src, dst)
+        copied += 1
+        if on_progress is not None:
+            on_progress(copied, total_files)
+
+    shutil.copytree(reference_dir, scenario_dir, copy_function=_copy_with_progress)
+    return scenario_dir
+
+
+def apply_draft_to_pnd(txtinout_dir: Path, draft: pd.DataFrame) -> None:
+    """Escribe cada fila del borrador en el .pnd real de su subcuenca,
+    dentro de la copia de trabajo del escenario (nunca en la referencia).
+
+    Es lo que ejecuta el botón "Guardar" de la ventana Wetlands.
+    """
+    txtinout_dir = Path(txtinout_dir)
     field_ids = list(draft.columns)
     for subbasin_id, row in draft.iterrows():
         pnd_file = txtinout_dir / f"{int(subbasin_id):05d}0000.pnd"
         write_wetland_params(pnd_file, {field_id: float(row[field_id]) for field_id in field_ids})
-
-    shutil.copy2(swat_executable, txtinout_dir / target_executable_name)
-
-    tool_outputs_dir = scenario_dir / "tool_outputs"
-    tool_outputs_dir.mkdir(parents=True, exist_ok=True)
-    params_csv = tool_outputs_dir / "scenario_params.csv"
-    shutil.move(str(draft_path), str(params_csv))
-
-    return ConfigureResult(scenario_dir=scenario_dir, txtinout_dir=txtinout_dir, params_csv=params_csv)

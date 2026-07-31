@@ -1,0 +1,8 @@
+Subbasin:2   Hru:2   Luse:FRST   Soil: 1013091         Slope: 0-9999
+
+* Este comentario no sigue la gramática de parámetro y debe conservarse.
+        0.4000    | HRU_FR : Fraction of subbasin area contained in HRU
+this line has no pipe separator at all
+       10.0000    | SLSUBBSN : Average slope length (m)
+   || broken separator line that should not parse cleanly
+        0.0500    | OV_N : Manning's "n" value for overland flow

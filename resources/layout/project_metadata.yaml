@@ -1,0 +1,15 @@
+# Campos del diálogo "Edit Project" (ui/dialog_project_edit.py).
+# Edita scenarios.project.ProjectMetadata.name / .description — nada más;
+# el bloque "summary" cacheado en project.json no se toca desde este diálogo.
+
+form: project_metadata
+fields:
+  - id: name
+    type: text
+    label_key: project.name
+    multiline: false
+
+  - id: description
+    type: text
+    label_key: project.description
+    multiline: true

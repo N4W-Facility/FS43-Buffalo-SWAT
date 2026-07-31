@@ -1,0 +1,4 @@
+Subbasin:3   Hru:3   Luse:PAST   Soil: 1013092         Slope: 0-9999
+        0.5000    | HRU_FR : Fraction of subbasin area contained in HRU
+        0.6000    | HRU_FR : Fraction of subbasin area contained in HRU (duplicated)
+       20.0000    | SLSUBBSN : Average slope length (m)

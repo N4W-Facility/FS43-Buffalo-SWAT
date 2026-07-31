@@ -1,0 +1,13 @@
+Subbasin:1   Hru:1   Luse:AGRL   Soil: 1013090         Slope: 0-9999
+        0.7500    | HRU_FR : Fraction of subbasin area contained in HRU
+       44.4270    | SLSUBBSN : Average slope length (m)
+        0.0700    | HRU_SLP : Average slope steepness (m/m)
+        0.1500    | OV_N : Manning's "n" value for overland flow
+       17.2410    | LAT_TTIME : Lateral flow travel time (days)
+        1.0000    | CANMX : Maximum canopy storage (mm)
+        0.9500    | ESCO : Soil evaporation compensation factor
+        1.0000    | EPCO : Plant uptake compensation factor
+     5000.0000    | RSDIN : Initial residue cover (kg/ha)
+        0.2000    | ERORGN : Organic N enrichment ratio
+        0.2000    | ERORGP : Organic P enrichment ratio
+       1.25E-05    | POT_FR : Fraction of HRU area that drains into pothole

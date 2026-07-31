@@ -1,0 +1,62 @@
+# Declara las tarjetas de estadísticas del panel de la pestaña Summary.
+# Cada tarjeta lee un campo de swat_io.stats.WetlandStats o swat_io.stats.HruStats
+# (ver "source") y se agrupa bajo el resumen que la produjo ("group": wetlands|hru).
+# Agregar una métrica nueva = agregar una entrada aquí, no tocar ui/tab_summary.py.
+#
+# format:
+#   int        -> "{value}"
+#   float:N    -> "{value:.Nf} {unit}" si hay unit_key
+#   percent:N  -> "{value:.Nf}%"
+#   period     -> caso especial: value es swat_io.cio_parser.SimulationPeriod
+#                 (o None si no se pudo leer file.cio); renderiza "{start}-{end}".
+
+stats:
+  - id: subbasin_count
+    group: wetlands
+    source: subbasin_count
+    label_key: stat.subbasins
+    format: "int"
+
+  - id: total_area
+    group: wetlands
+    source: total_area_km2
+    label_key: stat.total_area
+    format: "float:1"
+    unit_key: unit.km2
+
+  - id: wetland_area
+    group: wetlands
+    source: wetland_area_ha
+    label_key: stat.wetland_area
+    format: "float:1"
+    unit_key: unit.ha
+
+  - id: wetland_coverage
+    group: wetlands
+    source: wetland_coverage_pct
+    label_key: stat.wetland_coverage
+    format: "percent:1"
+
+  - id: subbasins_with_wetland
+    group: wetlands
+    source: subbasins_with_wetland
+    label_key: stat.subbasins_with_wetland
+    format: "int"
+
+  - id: hru_count
+    group: hru
+    source: hru_count
+    label_key: stat.hru_count
+    format: "int"
+
+  - id: land_use_count
+    group: hru
+    source: land_use_count
+    label_key: stat.land_use_count
+    format: "int"
+
+  - id: simulation_period
+    group: hru
+    source: simulation_period
+    label_key: stat.simulation_period
+    format: "period"

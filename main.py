@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from ui.app import App
+from config.settings import ConfigManager
+from ui import App
 
 
 def main() -> None:
-    app = App()
+    config = ConfigManager()
+    config.load_all()
+    app = App(config)
     app.mainloop()
 
 

@@ -4,7 +4,6 @@ import pandas as pd
 import pytest
 
 from scenarios.draft import draft_csv_path, import_draft_csv, init_draft, read_draft, update_draft_value
-from scenarios.models import Project
 from tests.helpers import make_synthetic_txtinout
 
 _LAYOUT = {
@@ -20,31 +19,24 @@ _LAYOUT = {
 }
 
 
-def _make_project(tmp_path: Path) -> Project:
-    base_dir = tmp_path / "base" / "Buffalo_calibrated_annual"
+def _make_project_dir(tmp_path: Path) -> tuple[Path, Path]:
     txtinout_dir = make_synthetic_txtinout(
-        base_dir,
+        tmp_path / "workspace" / "Buffalo" / "Buffalo_WET_MS_annual",
         {
             1: {"WET_FR": 0.2, "WET_NSA": 10.0},
             2: {"WET_FR": 0.0, "WET_NSA": 0.0},
         },
     )
     project_dir = tmp_path / "workspace" / "Buffalo"
-    project_dir.mkdir(parents=True)
-    return Project(
-        watershed="Buffalo",
-        base_model_dir=base_dir,
-        base_txtinout_dir=txtinout_dir,
-        project_dir=project_dir,
-    )
+    return project_dir, txtinout_dir
 
 
-def test_init_draft_seeds_from_base_model(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
+def test_init_draft_seeds_from_txtinout_dir(tmp_path: Path) -> None:
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
 
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
-    assert path == draft_csv_path(project, "Buffalo_WET_MS_annual")
+    assert path == draft_csv_path(project_dir, "Buffalo_WET_MS_annual")
     draft = read_draft(path)
     assert list(draft.index) == [1, 2]
     assert draft.loc[1, "wet_fr"] == 0.2
@@ -52,8 +44,8 @@ def test_init_draft_seeds_from_base_model(tmp_path: Path) -> None:
 
 
 def test_update_draft_value_writes_valid_value(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
     draft = update_draft_value(path, 1, "wet_fr", 0.75, _LAYOUT)
 
@@ -62,8 +54,8 @@ def test_update_draft_value_writes_valid_value(tmp_path: Path) -> None:
 
 
 def test_update_draft_value_rejects_out_of_range_and_writes_nothing(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
     with pytest.raises(ValueError):
         update_draft_value(path, 1, "wet_fr", 1.5, _LAYOUT)
@@ -72,16 +64,16 @@ def test_update_draft_value_rejects_out_of_range_and_writes_nothing(tmp_path: Pa
 
 
 def test_update_draft_value_rejects_unknown_subbasin(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
     with pytest.raises(KeyError):
         update_draft_value(path, 999, "wet_fr", 0.5, _LAYOUT)
 
 
 def test_import_draft_csv_applies_all_valid_rows(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
     import_path = tmp_path / "import.csv"
     pd.DataFrame(
@@ -101,8 +93,8 @@ def test_import_draft_csv_applies_all_valid_rows(tmp_path: Path) -> None:
 
 
 def test_import_draft_csv_rejects_missing_column_and_applies_nothing(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
     import_path = tmp_path / "import.csv"
     pd.DataFrame([{"subbasin_id": 1, "wet_fr": 0.5}]).to_csv(import_path, index=False)
@@ -114,8 +106,8 @@ def test_import_draft_csv_rejects_missing_column_and_applies_nothing(tmp_path: P
 
 
 def test_import_draft_csv_rejects_out_of_range_value_and_applies_nothing(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    path = init_draft(project, "Buffalo_WET_MS_annual")
+    project_dir, txtinout_dir = _make_project_dir(tmp_path)
+    path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
 
     import_path = tmp_path / "import.csv"
     pd.DataFrame(

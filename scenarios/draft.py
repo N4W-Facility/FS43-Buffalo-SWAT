@@ -6,7 +6,6 @@ import pandas as pd
 
 from swat_io.summary import summarize_project
 
-from .models import Project
 from .validation import validate_field_value
 
 _DRAFT_DIRNAME = "_borradores"
@@ -22,15 +21,16 @@ _SUMMARY_TO_FIELD = {
 }
 
 
-def draft_csv_path(project: Project, scenario_name: str) -> Path:
-    return project.project_dir / _DRAFT_DIRNAME / f"{scenario_name}.csv"
+def draft_csv_path(project_dir: Path, scenario_name: str) -> Path:
+    return Path(project_dir) / _DRAFT_DIRNAME / f"{scenario_name}.csv"
 
 
-def init_draft(project: Project, scenario_name: str) -> Path:
-    """Crea el borrador de un escenario, sembrado con los valores actuales del modelo base."""
-    summary = summarize_project(project.base_txtinout_dir)
+def init_draft(project_dir: Path, scenario_name: str, txtinout_dir: Path) -> Path:
+    """Crea el borrador de un escenario, sembrado con los valores actuales
+    de txtinout_dir (la copia de trabajo recién creada, no la referencia)."""
+    summary = summarize_project(txtinout_dir)
     draft = summary[list(_SUMMARY_TO_FIELD.keys())].rename(columns=_SUMMARY_TO_FIELD)
-    path = draft_csv_path(project, scenario_name)
+    path = draft_csv_path(project_dir, scenario_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     draft.to_csv(path)
     return path

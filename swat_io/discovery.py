@@ -49,6 +49,36 @@ def discover_base_models(base_models_root: Path) -> list["BaseModelInfo"]:
     return models
 
 
+@dataclass(frozen=True)
+class ScenarioFolder:
+    name: str
+    dir: Path
+    txtinout_dir: Path
+
+
+def discover_scenario_folders(project_dir: Path) -> list["ScenarioFolder"]:
+    """Lista las subcarpetas directas de project_dir que son escenarios válidos.
+
+    Un escenario válido es cualquier subcarpeta con TxtInOut/ que contenga
+    al menos un archivo .sub reconocible. No importa si su nombre sigue la
+    convención "*_calibrated_*" o no: aquí se listan por igual, ya que son
+    solo referencias de solo lectura para copiar.
+    """
+    project_dir = Path(project_dir)
+    folders: list[ScenarioFolder] = []
+    if not project_dir.is_dir():
+        return folders
+    for candidate in sorted(project_dir.iterdir()):
+        if not candidate.is_dir():
+            continue
+        txtinout_dir = candidate / "TxtInOut"
+        if not txtinout_dir.is_dir():
+            continue
+        if any(_SUB_FILENAME.match(p.name) for p in txtinout_dir.iterdir()):
+            folders.append(ScenarioFolder(candidate.name, candidate, txtinout_dir))
+    return folders
+
+
 def discover_subbasins(txtinout_dir: Path) -> list[SubbasinFiles]:
     """Lista las subcuencas reales de un TxtInOut, a partir de sus .sub.
 

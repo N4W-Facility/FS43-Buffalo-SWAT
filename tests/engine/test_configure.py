@@ -2,67 +2,80 @@ from pathlib import Path
 
 import pytest
 
-from engine.configure import configure_scenario
-from scenarios.draft import init_draft, update_draft_value
-from scenarios.models import Project
+from engine.configure import apply_draft_to_pnd, create_working_scenario
+from scenarios.draft import init_draft, read_draft, update_draft_value
 from swat_io.pnd_parser import parse_pnd_file
 from tests.helpers import make_synthetic_txtinout
 
 _LAYOUT = {"fields": [{"id": "wet_fr", "range": [0.0, 1.0]}]}
 
 
-def _make_project(tmp_path: Path) -> Project:
-    base_dir = tmp_path / "base" / "Buffalo_calibrated_annual"
-    txtinout_dir = make_synthetic_txtinout(base_dir, {1: {"WET_FR": 0.2}, 2: {"WET_FR": 0.0}})
+def test_create_working_scenario_copies_whole_reference_folder(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "Buffalo_calibrated_annual"
+    make_synthetic_txtinout(reference_dir, {1: {"WET_FR": 0.2}})
+    (reference_dir / "TablesIn").mkdir()
+    (reference_dir / "TablesOut").mkdir()
     project_dir = tmp_path / "workspace" / "Buffalo"
     project_dir.mkdir(parents=True)
-    return Project(
-        watershed="Buffalo",
-        base_model_dir=base_dir,
-        base_txtinout_dir=txtinout_dir,
-        project_dir=project_dir,
+
+    scenario_dir = create_working_scenario(project_dir, reference_dir, "Buffalo_WET_MS_annual")
+
+    assert scenario_dir == project_dir / "Buffalo_WET_MS_annual"
+    assert (scenario_dir / "TxtInOut" / "000010000.pnd").exists()
+    assert (scenario_dir / "TablesIn").is_dir()
+    assert (scenario_dir / "TablesOut").is_dir()
+    # reference untouched
+    reference_pnd = parse_pnd_file(reference_dir / "TxtInOut" / "000010000.pnd", subbasin_id=1)
+    assert reference_pnd.wet_fr == 0.2
+
+
+def test_create_working_scenario_reports_progress(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "Buffalo_calibrated_annual"
+    make_synthetic_txtinout(reference_dir, {1: {"WET_FR": 0.2}, 2: {"WET_FR": 0.0}})
+    project_dir = tmp_path / "workspace" / "Buffalo"
+    project_dir.mkdir(parents=True)
+    calls: list[tuple[int, int]] = []
+
+    create_working_scenario(
+        project_dir, reference_dir, "Buffalo_WET_MS_annual",
+        on_progress=lambda copied, total: calls.append((copied, total)),
     )
 
-
-def test_configure_scenario_materializes_working_copy(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    draft_path = init_draft(project, "Buffalo_WET_MS_annual")
-    update_draft_value(draft_path, 1, "wet_fr", 0.9, _LAYOUT)
-    swat_executable = tmp_path / "rev670_64rel.exe"
-    swat_executable.write_text("fake binary")
-
-    result = configure_scenario(project, "Buffalo_WET_MS_annual", swat_executable, "swatUser.exe")
-
-    assert result.txtinout_dir == project.project_dir / "Buffalo_WET_MS_annual" / "TxtInOut"
-    assert (result.txtinout_dir / "swatUser.exe").exists()
-    updated = parse_pnd_file(result.txtinout_dir / "000010000.pnd", subbasin_id=1)
-    assert updated.wet_fr == 0.9
-    unchanged = parse_pnd_file(result.txtinout_dir / "000020000.pnd", subbasin_id=2)
-    assert unchanged.wet_fr == 0.0
-    assert result.params_csv == result.scenario_dir / "tool_outputs" / "scenario_params.csv"
-    assert result.params_csv.exists()
-    assert not draft_path.exists()
-    # base model untouched
-    base_pnd = parse_pnd_file(project.base_txtinout_dir / "000010000.pnd", subbasin_id=1)
-    assert base_pnd.wet_fr == 0.2
+    assert calls
+    total = calls[0][1]
+    assert all(total_files == total for _, total_files in calls)
+    assert calls[-1][0] == total
+    assert [copied for copied, _ in calls] == sorted(copied for copied, _ in calls)
 
 
-def test_configure_scenario_raises_without_a_draft(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    swat_executable = tmp_path / "rev670_64rel.exe"
-    swat_executable.write_text("fake binary")
+def test_create_working_scenario_refuses_to_overwrite_existing(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "Buffalo_calibrated_annual"
+    make_synthetic_txtinout(reference_dir, {1: {"WET_FR": 0.2}})
+    project_dir = tmp_path / "workspace" / "Buffalo"
+    project_dir.mkdir(parents=True)
+    create_working_scenario(project_dir, reference_dir, "Buffalo_WET_MS_annual")
 
-    with pytest.raises(FileNotFoundError):
-        configure_scenario(project, "Buffalo_WET_MS_annual", swat_executable, "swatUser.exe")
-
-
-def test_configure_scenario_refuses_to_overwrite_existing_scenario(tmp_path: Path) -> None:
-    project = _make_project(tmp_path)
-    init_draft(project, "Buffalo_WET_MS_annual")
-    swat_executable = tmp_path / "rev670_64rel.exe"
-    swat_executable.write_text("fake binary")
-    configure_scenario(project, "Buffalo_WET_MS_annual", swat_executable, "swatUser.exe")
-
-    init_draft(project, "Buffalo_WET_MS_annual")  # recreate a draft with the same name
     with pytest.raises(FileExistsError):
-        configure_scenario(project, "Buffalo_WET_MS_annual", swat_executable, "swatUser.exe")
+        create_working_scenario(project_dir, reference_dir, "Buffalo_WET_MS_annual")
+
+
+def test_apply_draft_to_pnd_writes_edited_values_only_to_working_copy(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "Buffalo_calibrated_annual"
+    make_synthetic_txtinout(reference_dir, {1: {"WET_FR": 0.2}, 2: {"WET_FR": 0.0}})
+    project_dir = tmp_path / "workspace" / "Buffalo"
+    project_dir.mkdir(parents=True)
+    scenario_dir = create_working_scenario(project_dir, reference_dir, "Buffalo_WET_MS_annual")
+    txtinout_dir = scenario_dir / "TxtInOut"
+    draft_path = init_draft(project_dir, "Buffalo_WET_MS_annual", txtinout_dir)
+    update_draft_value(draft_path, 1, "wet_fr", 0.9, _LAYOUT)
+    draft = read_draft(draft_path)
+
+    apply_draft_to_pnd(txtinout_dir, draft)
+
+    updated = parse_pnd_file(txtinout_dir / "000010000.pnd", subbasin_id=1)
+    assert updated.wet_fr == 0.9
+    unchanged = parse_pnd_file(txtinout_dir / "000020000.pnd", subbasin_id=2)
+    assert unchanged.wet_fr == 0.0
+    # reference still untouched
+    reference_pnd = parse_pnd_file(reference_dir / "TxtInOut" / "000010000.pnd", subbasin_id=1)
+    assert reference_pnd.wet_fr == 0.2
