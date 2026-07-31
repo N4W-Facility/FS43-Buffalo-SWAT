@@ -6,6 +6,7 @@
   "tab.wetlands": "Wetlands (.pnd)",
 
   "wetlands_tab.title": "Wetland Parameters (.pnd)",
+  "wetlands_tab.edit_button": "Edit in .pnd",
 
   "config.title": "Settings",
   "config.executable_path": "SWAT executable (rev670_64rel.exe)",
@@ -72,8 +73,13 @@
   "wetland.wetevcoeff": "Wetland evaporation coefficient (WETEVCOEFF)",
   "wetland.count": "{with_wetland} of {total} subbasins with wetland",
   "wetland.import_csv": "Load CSV",
+  "wetland.import_confirm": "Found {count} value(s) across {subbasins} subbasin(s) to load. This will not touch any .pnd file yet -- Materialize does that. Continue?",
   "wetland.import_error": "Could not import the CSV: {error}",
   "wetland.import_success": "CSV imported successfully.",
+  "wetland.materialize": "Materialize to SWAT",
+  "wetland.materialize_confirm": "This will write {count} modified value(s) to {subbasins} .pnd file(s). This cannot be undone. Continue?",
+  "wetland.materialize_success": "Changes materialized to .pnd files.",
+  "wetland.materialize_error": "Some changes could not be written: {error}",
 
   "wetland_editor.title": "Wetland Parameters",
   "wetland_editor.no_subbasins": "No subbasins found in this project.",

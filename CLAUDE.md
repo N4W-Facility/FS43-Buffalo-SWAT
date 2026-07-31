@@ -65,6 +65,19 @@ app de escritorio).
   `tool_outputs/wetland_params_draft.csv` (`scenarios/wetland_draft.py`)
   como respaldo — ese CSV se reconstruye desde los `.pnd` reales cada vez
   que se abre la ventana, nunca es una segunda fuente de verdad.
+  La pestaña Wetlands también soporta modificación masiva: "Load CSV" lee
+  un CSV con la misma estructura que `wetland_summary.csv` (columnas con
+  sufijo de unidad, ver `swat_io/summary.py`), permite carga parcial
+  (subconjunto de subcuencas/parámetros), valida columnas/subcuencas/rangos
+  de una sola vez (`scenarios/wetland_import.py`, sin dependencias de UI) y,
+  si es válido, puebla un staging **en memoria** (nunca toca ningún
+  `.pnd`) mostrado con un marcador `*` sobre la tabla de solo lectura. El
+  botón "Materialize to SWAT" es el único paso que escribe de verdad —
+  vuelve a llamar a `write_wetland_params` por subcuenca y refresca el
+  draft CSV — y pide su propia confirmación por ser irreversible. El
+  staging se pierde si se cambia de proyecto o se cierra la app sin
+  materializar; deliberadamente no se persiste a disco para no crear una
+  segunda fuente de verdad además del draft ya existente.
 - **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`. Todavía no
   invoca `swat2012.exe` como subproceso — sigue faltando el paso 2 del
   resumen del proyecto.
