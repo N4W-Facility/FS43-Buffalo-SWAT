@@ -43,3 +43,19 @@ def test_write_value_code_file_ignores_unrelated_codes(tmp_path: Path) -> None:
     write_value_code_file(path, {"WET_FR": 1.0})
 
     assert path.read_text(encoding="utf-8") == original
+
+
+def test_write_value_code_file_decimals_zero_writes_plain_integers(tmp_path: Path) -> None:
+    path = tmp_path / "file.cio"
+    path.write_text(
+        "               8    | NBYR : Number of years simulated\n"
+        "            2012    | IYR : Beginning year of simulation\n",
+        encoding="utf-8",
+    )
+
+    write_value_code_file(path, {"NBYR": 5.0, "IYR": 2015.0}, decimals=0)
+
+    content = path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    assert lines[0] == "               5    | NBYR : Number of years simulated"
+    assert lines[1] == "            2015    | IYR : Beginning year of simulation"

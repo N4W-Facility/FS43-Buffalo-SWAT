@@ -95,3 +95,12 @@ def validate_app_paths(swat_executable: Path, base_models_root: Path, workspace_
     if not Path(base_models_root).is_dir() or not Path(workspace_root).is_dir():
         return "config.error.invalid_directory"
     return None
+
+
+def validate_swat_executable(swat_executable: Path) -> str | None:
+    """Como validate_app_paths, pero solo para el ejecutable: la pestaña Run
+    no depende de base_models_root/workspace_root (rutas del flujo de
+    referencia/escenario pre-rebuild, sin UI propia hoy)."""
+    if not Path(swat_executable).is_file():
+        return "config.error.invalid_executable"
+    return None

@@ -35,14 +35,17 @@ def parse_value_code_file(path: Path) -> dict[str, str]:
     return values
 
 
-def write_value_code_file(path: Path, updates: dict[str, float]) -> None:
+def write_value_code_file(path: Path, updates: dict[str, float], *, decimals: int = 3) -> None:
     """Reescribe, sobre el mismo archivo, solo el valor numérico de las
     líneas cuyo CODIGO está en updates.
 
     El resto de cada línea (separador, código, descripción, salto de
-    línea) queda exactamente igual. El nuevo valor se formatea con 3
-    decimales, justificado a la derecha dentro del ancho de campo que ya
-    tenía esa línea (no se asume un ancho fijo global).
+    línea) queda exactamente igual. El nuevo valor se formatea justificado
+    a la derecha dentro del ancho de campo que ya tenía esa línea (no se
+    asume un ancho fijo global). decimals=3 por defecto (parámetros
+    físicos de .pnd/.sub); file.cio usa decimals=0 -- sus campos
+    (NBYR, IYR, IPRINT, NYSKIP) son enteros y swat2012.exe podría no
+    tolerar un punto decimal en ese campo.
     """
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -53,7 +56,7 @@ def write_value_code_file(path: Path, updates: dict[str, float]) -> None:
         if match and match.group("code") in updates:
             width = match.end("value")
             new_value = updates[match.group("code")]
-            formatted = f"{new_value:>{width}.3f}"
+            formatted = f"{new_value:>{width}.{decimals}f}"
             line = formatted + line[match.end("value"):]
         new_lines.append(line)
 

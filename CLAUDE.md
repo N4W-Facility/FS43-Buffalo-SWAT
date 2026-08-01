@@ -129,9 +129,60 @@ app de escritorio).
   parámetro de esa HRU falla, no se escribe ningún cambio de esa HRU,
   pero las demás HRU del lote sí siguen). Sin edición inline de celdas
   todavía (a diferencia de Wetlands): no se pidió en esta ronda.
-- **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`. Todavía no
-  invoca `swat2012.exe` como subproceso — sigue faltando el paso 2 del
-  resumen del proyecto.
+- **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`.
+- **Pestaña Run** (`ui/tab_run.py` + `engine/run.py`): quinta pestaña,
+  habilitada al abrir proyecto igual que Wetlands/HRUs/Summary. Cubre el
+  paso 2 del resumen del proyecto (ejecutar `swat2012.exe` como
+  subproceso), que hasta ahora no existía en ningún lugar del código.
+  También aloja la única configuración de ruta que la app usa hoy
+  (`config.settings.AppPaths.swat_executable`, existente en el modelo de
+  datos desde antes pero sin ninguna pantalla que la seteara): campo de
+  solo lectura con la ruta configurada + botón "Browse..." que valida
+  (`config.settings.validate_swat_executable`) y persiste vía
+  `ConfigManager.save_paths`. Sin pestaña Settings separada — decisión
+  explícita para no crear una pantalla de configuración dedicada mientras
+  sea una sola ruta; si a futuro se agregan más rutas configurables ahí sí
+  valdría la pena separarlo. El botón Run (deshabilitado sin proyecto
+  abierto o sin ejecutable válido) pide confirmación y corre
+  `engine.run.run_scenario` en hilo de fondo
+  (`ui.tasks.run_in_background`, mismo patrón obligatorio que Summary/HRU)
+  — una corrida real de SWAT puede tomar del orden de minutos. Esa función
+  copia el ejecutable configurado a `TxtInOut/<target_executable_name>`
+  (nunca renombra ni modifica el archivo original en su ubicación) y lo
+  ejecuta con `cwd` en `TxtInOut`, capturando stdout/stderr completos.
+  Éxito/error se determina únicamente por el exit code del proceso (0 =
+  éxito) — decisión explícita del usuario (2026-07-31): no se intenta
+  inferir éxito a partir de la presencia o contenido de `output.std`.
+  Terminada la corrida, la pestaña muestra un log de solo lectura con
+  stdout+stderr y un mensaje de éxito o de error con el exit code.
+  Bloquea navegación mientras corre (`App._on_run_tab_run_state_changed`,
+  mismo mecanismo que las demás operaciones de fondo). Sin parseo de
+  `output.*` — eso queda para la pieza de `viz/` de comparación línea
+  base/escenario, que sigue sin empezar.
+
+  También expone, en una tarjeta aparte dentro de la misma pestaña, los
+  parámetros de `file.cio` más relevantes para una corrida puntual: año de
+  inicio/fin (`NBYR`/`IYR`), años de warm-up excluidos del output
+  (`NYSKIP`), y frecuencia de impresión (`IPRINT`: Daily/Monthly/Yearly).
+  Decisión explícita del usuario (2026-07-31): CLAUDE.md ya traía una
+  excepción para tocar `.fig`/`.cio` ante "cambio explícito de periodo
+  simulado pedido por el usuario"; NYSKIP e IPRINT se suman a esa misma
+  excepción porque son configuración de la corrida, no física del modelo
+  — a diferencia de `.bsn`, que sigue sin ninguna excepción. Implementado
+  en `swat_io.cio_parser` (`parse_run_settings`/`write_run_settings`,
+  nuevo — el módulo antes solo leía) sobre el mismo grammar
+  "valor | CODIGO : descripción" de `.pnd`/`.sub`
+  (`swat_io.text_format.write_value_code_file`, ahora con un parámetro
+  `decimals` — 0 para enteros como los de `file.cio`, en vez de los 3
+  decimales que usan los parámetros físicos de humedal). Mismo patrón
+  Edit/Cancel/Save con confirmación que `WetlandEditorWindow`/
+  `HRUEditorWindow`, pero inline en la tarjeta en vez de una ventana
+  aparte. Validación antes de escribir (año fin ≥ año inicio, `NYSKIP` en
+  `[0, NBYR)`) tanto en la UI como en `write_run_settings` (no se llega a
+  tocar el archivo si algún valor es inconsistente). Verificado además
+  contra un `file.cio` real (`03-Models/Buffalo/Buffalo_calibrated_annual`)
+  para confirmar que el ancho de columna se preserva y el resto del
+  archivo queda byte a byte intacto.
 - **`viz/`**: solo `land_use_chart.py` (coberturas por subcuenca, Summary).
   Sin empezar: gráficas comparativas línea base vs. escenario (caudal,
   sedimento, nutrientes) — el motivo original del paquete.
@@ -141,7 +192,9 @@ restricción "Aislamiento por escenario" de la sección siguiente **no está
 enforced por código todavía**. Las pestañas Wetlands y HRUs escriben sobre
 `<proyecto abierto>/TxtInOut/*.pnd` y `*.hru` respectivamente sin verificar
 si esa carpeta es una copia de escenario o el modelo de referencia
-calibrado. Decisión explícita del usuario (2026-07-31, reafirmada al
+calibrado; la pestaña Run corre `swat2012.exe` sobre ese mismo
+`TxtInOut` sin esa verificación tampoco, con el mismo aviso. Decisión
+explícita del usuario (2026-07-31, reafirmada al
 construir la pestaña HRUs): no bloquear esto en código por ahora — quedará
 documentado en un futuro manual de usuario que abrir la carpeta calibrada
 directamente es bajo su propio riesgo. No "arreglar" esto de oficio sin

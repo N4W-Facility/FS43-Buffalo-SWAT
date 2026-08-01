@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from config.settings import AppPaths, ConfigManager, validate_app_paths
+from config.settings import AppPaths, ConfigManager, validate_app_paths, validate_swat_executable
 
 
 def test_app_paths_round_trip_including_target_executable_name(tmp_path: Path) -> None:
@@ -68,3 +68,16 @@ def test_validate_app_paths_invalid_directory(tmp_path: Path) -> None:
     error = validate_app_paths(exe, tmp_path / "missing_models", tmp_path / "missing_workspace")
 
     assert error == "config.error.invalid_directory"
+
+
+def test_validate_swat_executable_valid(tmp_path: Path) -> None:
+    exe = tmp_path / "swat2012.exe"
+    exe.write_text("fake binary")
+
+    assert validate_swat_executable(exe) is None
+
+
+def test_validate_swat_executable_invalid(tmp_path: Path) -> None:
+    error = validate_swat_executable(tmp_path / "missing.exe")
+
+    assert error == "config.error.invalid_executable"
