@@ -15,6 +15,7 @@ antes de escribir.
 from __future__ import annotations
 
 from pathlib import Path
+from tkinter import ttk
 
 import customtkinter as ctk
 
@@ -25,7 +26,7 @@ from swat_io.discovery import discover_subbasins
 from swat_io.pnd_parser import write_wetland_params
 
 from .dialog_confirm import ConfirmDialog
-from .widgets import palette
+from .widgets import palette, style_combobox
 
 _WINDOW_SIZE = "520x680"
 
@@ -92,9 +93,12 @@ class WetlandEditorWindow(ctk.CTkToplevel):
         label.pack(side="left")
 
         values = [str(s.subbasin_id) for s in self._subbasins]
-        self._selector = ctk.CTkOptionMenu(header, values=values, command=self._on_subbasin_selected)
+        self._selector = ttk.Combobox(
+            header, style=style_combobox(self._config), state="readonly", values=values, width=8
+        )
         self._selector.pack(side="left", padx=(8, 0))
         self._selector.set(str(self._current_subbasin))
+        self._selector.bind("<<ComboboxSelected>>", self._on_subbasin_selected)
 
     def _build_form(self) -> None:
         self._form_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -163,8 +167,8 @@ class WetlandEditorWindow(ctk.CTkToplevel):
 
     # -- estado -------------------------------------------------------------
 
-    def _on_subbasin_selected(self, value: str) -> None:
-        self._load_subbasin(int(value))
+    def _on_subbasin_selected(self, _event=None) -> None:
+        self._load_subbasin(int(self._selector.get()))
 
     def _load_subbasin(self, subbasin_id: int) -> None:
         self._current_subbasin = subbasin_id
@@ -228,7 +232,7 @@ class WetlandEditorWindow(ctk.CTkToplevel):
         self._set_status(self._config.text("wetland_editor.saved"))
 
     def _exit_edit_mode(self) -> None:
-        self._selector.configure(state="normal")
+        self._selector.configure(state="readonly")
         self._save_button.pack_forget()
         self._cancel_button.pack_forget()
         self._edit_button.pack(side="right")

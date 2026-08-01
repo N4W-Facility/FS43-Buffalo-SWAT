@@ -32,7 +32,7 @@ de la visualización comparativa, no en el cómputo hidrológico en sí.
 ## Estado actual de la implementación
 
 La interfaz (`ui/`) fue reconstruida desde cero (agosto 2026) y `main.py`
-arranca una app funcional de tres pestañas. Dependencia nueva: **matplotlib**
+arranca una app funcional de cuatro pestañas. Dependencia nueva: **matplotlib**
 (en el env conda `swat`), usada solo por `viz/land_use_chart.py`, sin
 `pyplot` (se construye `Figure` directo y se embebe con
 `FigureCanvasTkAgg`, para no arrastrar el estado global de pyplot en una
@@ -78,6 +78,57 @@ app de escritorio).
   staging se pierde si se cambia de proyecto o se cierra la app sin
   materializar; deliberadamente no se persiste a disco para no crear una
   segunda fuente de verdad además del draft ya existente.
+- **Pestaña HRUs (.hru)** (`ui/tab_hru.py` + `ui/hru_editor_window.py` +
+  `scenarios/hru_draft.py`): a diferencia de Wetlands, una subcuenca tiene
+  N archivos `.hru` (uno por HRU), no uno solo, así que la tabla está
+  acotada a la subcuenca elegida en un selector: filas = HRU, columnas =
+  cada parámetro reconocido en esos archivos (`ttk.Treeview`, mismo motivo
+  que Wetlands). No hay lista curada de campos ni rangos por parámetro —
+  decisión explícita del usuario (2026-07-31): se expone todo lo que
+  `swat_io.hru.parser` reconoce en cada `.hru`, en vez de una lista fija
+  como los 20 campos de `wetland_params.yaml`. Doble clic sobre el id de
+  HRU abre `HRUEditorWindow` (selectores encadenados subcuenca → HRU,
+  campos de solo lectura → Edit los habilita → Save pide confirmación).
+  Sin rangos declarados, la validación antes de guardar corre
+  `HRUFile.validate()` (ya existente en `swat_io/hru/validation.py`, p. ej.
+  `HRU_FR` fuera de `[0, 1]`) sobre una copia con los cambios aplicados, y
+  bloquea el guardado si hay algún issue de severidad `ERROR`. Al guardar
+  escribe **directo sobre el `.hru` real** vía
+  `scenarios.hru_draft.write_hru_values`, que deliberadamente no usa
+  `swat_io.hru.writer.write_hru_file` (esa función exige un destino
+  distinto al origen, pensada para escritura aislada por escenario) sino
+  que reescribe el archivo en el mismo lugar — mismo aviso de aislamiento
+  que Wetlands, ver más abajo. Como no hay lista curada de parámetros
+  (a diferencia de Wetlands, con los 20 campos fijos y documentados de
+  `wetland_params.yaml`), el usuario no tiene forma de saber de antemano
+  qué columnas/subcuenca/HRU son válidas para armar un CSV de import —
+  por eso "Export CSV" (`scenarios.hru_draft.export_hru_table_csv`) vuelca
+  la tabla de la subcuenca visible (`subbasin`, `hru`, y cada parámetro
+  real) a un CSV con exactamente el formato que espera el import, listo
+  para editar y reimportar. No es un respaldo tipo
+  `wetland_params_draft.csv` (que se reescribe en cada guardado): es una
+  plantilla de referencia bajo demanda, sin estado propio. También soporta
+  modificación masiva: "Load CSV" (`scenarios/hru_import.py`) lee un CSV
+  indexado por columnas `subbasin`/`hru` (una fila = una HRU, a diferencia
+  del CSV de Wetlands que es una fila = una subcuenca) más una columna por
+  parámetro; sin lista curada de columnas válidas, solo valida que la
+  subcuenca/HRU exista (por nombre de archivo, sin parsear contenido —
+  `scenarios.hru_draft.list_subbasin_hru_ids`) y que el valor sea
+  numérico — un nombre de parámetro que no existe en esa HRU puntual
+  recién se rechaza en Materialize (`HRUFile.set_value` levanta
+  `HRUModificationError`, "no se crean parámetros nuevos"). El resultado
+  puebla un staging en memoria (`dict[(subbasin_id, hru_id), dict]`)
+  marcado con `*` sobre la tabla, igual que Wetlands. Diferencia
+  importante de diseño: el Materialize de Wetlands es síncrono (a lo sumo
+  una escritura por subcuenca); el de HRUs corre en hilo de fondo
+  (`ui.tasks.run_in_background`) y bloquea navegación
+  (`App._on_hru_run_state_changed`, mismo mecanismo que el Run de
+  Summary) porque un CSV de HRUs puede tocar muchas más filas que uno de
+  Wetlands — CLAUDE.md exige hilo de fondo para cualquier operación que
+  pueda escalar a "miles de .hru". Cada HRU se escribe todo-o-nada (si un
+  parámetro de esa HRU falla, no se escribe ningún cambio de esa HRU,
+  pero las demás HRU del lote sí siguen). Sin edición inline de celdas
+  todavía (a diferencia de Wetlands): no se pidió en esta ronda.
 - **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`. Todavía no
   invoca `swat2012.exe` como subproceso — sigue faltando el paso 2 del
   resumen del proyecto.
@@ -87,10 +138,11 @@ app de escritorio).
 
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
-enforced por código todavía**. La pestaña Wetlands escribe sobre
-`<proyecto abierto>/TxtInOut/*.pnd` sin verificar si esa carpeta es una
-copia de escenario o el modelo de referencia calibrado. Decisión explícita
-del usuario (2026-07-31): no bloquear esto en código por ahora — quedará
+enforced por código todavía**. Las pestañas Wetlands y HRUs escriben sobre
+`<proyecto abierto>/TxtInOut/*.pnd` y `*.hru` respectivamente sin verificar
+si esa carpeta es una copia de escenario o el modelo de referencia
+calibrado. Decisión explícita del usuario (2026-07-31, reafirmada al
+construir la pestaña HRUs): no bloquear esto en código por ahora — quedará
 documentado en un futuro manual de usuario que abrir la carpeta calibrada
 directamente es bajo su propio riesgo. No "arreglar" esto de oficio sin
 que el usuario lo pida — es una elección consciente, no un olvido.
@@ -141,9 +193,12 @@ con el resto del repo). Es una librería de `swat_io`, sin dependencias de UI
 ni del subproceso SWAT. Su parte de solo lectura (inventario y resumen de
 coberturas) se expone vía `generar_resumen_coberturas.py`, invocado en
 hilo de fondo desde la pestaña Summary de la UI (ver "Estado actual").
-Su API de modificación masiva (`HRUSelection`/`HRUModificationRule`,
-ver más abajo) sigue sin conectarse a ningún flujo de la interfaz — queda
-lista para un futuro flujo de edición de HRU.
+Su edición de un solo parámetro/HRU (`get_value`/`set_value`) sí está
+conectada a la UI desde la pestaña HRUs (`ui/hru_editor_window.py`, ver
+"Estado actual"). Su API de modificación masiva (`HRUSelection`/
+`HRUModificationRule`, ver más abajo) sigue sin conectarse a ningún flujo
+de la interfaz — queda lista para un futuro flujo de edición masiva de
+HRU, equivalente al CSV import/Materialize que sí tiene Wetlands.
 
 **Qué resuelve:**
 

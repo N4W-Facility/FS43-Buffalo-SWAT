@@ -35,7 +35,7 @@ from swat_io.pnd_parser import _FIELD_TO_CODE, write_wetland_params
 
 from .dialog_confirm import ConfirmDialog
 from .wetland_editor_window import WetlandEditorWindow
-from .widgets import palette
+from .widgets import palette, style_combobox
 
 _ROW_HEIGHT = 26
 _ACRONYM_COLUMN_WIDTH = 130
@@ -85,7 +85,9 @@ class WetlandsTab(ctk.CTkFrame):
         )
         title.grid(row=0, column=0, sticky="w")
 
-        self._subbasin_selector = ctk.CTkOptionMenu(header, values=[])
+        self._subbasin_selector = ttk.Combobox(
+            header, style=style_combobox(self._config), state="readonly", values=[], width=8
+        )
         self._subbasin_selector.grid(row=0, column=1, sticky="e", padx=(0, 8))
 
         self._edit_button = ctk.CTkButton(

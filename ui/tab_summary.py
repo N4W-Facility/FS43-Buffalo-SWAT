@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from tkinter import ttk
 from typing import Callable
 
 import customtkinter as ctk
@@ -31,7 +32,7 @@ from swat_io.tool_outputs import save_wetland_summary, tool_outputs_dir
 from viz.land_use_chart import build_land_use_figure
 
 from .tasks import run_in_background
-from .widgets import SectionHeader, StatCard, palette
+from .widgets import SectionHeader, StatCard, palette, style_combobox
 
 _LAND_USE_CSV_NAME = "land_use_by_subbasin.csv"
 
@@ -191,9 +192,12 @@ class SummaryTab(ctk.CTkFrame):
         )
         self._chart_empty_label.grid(row=0, column=0, sticky="w")
 
-        self._chart_selector = ctk.CTkOptionMenu(charts_body, values=[], command=self._on_chart_subbasin_selected)
+        self._chart_selector = ttk.Combobox(
+            charts_body, style=style_combobox(self._config), state="readonly", values=[], width=20
+        )
         self._chart_selector.grid(row=0, column=0, sticky="w")
         self._chart_selector.grid_remove()
+        self._chart_selector.bind("<<ComboboxSelected>>", self._on_chart_subbasin_selected)
 
         self._chart_canvas_frame = ctk.CTkFrame(charts_body, fg_color=self._colors.get("surface"))
         self._chart_canvas_frame.grid(row=1, column=0, sticky="ew", pady=(8, 0))
@@ -262,7 +266,8 @@ class SummaryTab(ctk.CTkFrame):
         self._chart_canvas_frame.grid()
         self._render_chart(None, total_label)
 
-    def _on_chart_subbasin_selected(self, value: str) -> None:
+    def _on_chart_subbasin_selected(self, _event=None) -> None:
+        value = self._chart_selector.get()
         self._render_chart(self._chart_values_to_subbasin.get(value), value)
 
     def _render_chart(self, subbasin: int | None, label: str) -> None:
