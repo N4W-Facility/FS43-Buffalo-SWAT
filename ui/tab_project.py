@@ -12,7 +12,13 @@ from typing import Callable
 import customtkinter as ctk
 
 from config.settings import ConfigManager
-from scenarios.project import ProjectMetadata, is_valid_project_dir, load_project
+from scenarios.project import (
+    ProjectMetadata,
+    is_valid_project_dir,
+    load_project,
+    save_project,
+    validate_shapefile_path,
+)
 
 from .dialog_project_edit import ProjectEditDialog
 from .widgets import ReadOnlyField, palette
@@ -121,7 +127,85 @@ class ProjectTab(ctk.CTkFrame):
         self._description_field = ReadOnlyField(info_card, self._config, "project.description")
         self._description_field.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 16))
 
+        separator_2 = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
+        separator_2.grid(row=3, column=0, columnspan=2, sticky="ew", pady=12)
+
+        self._build_shapefiles_card(frame).grid(row=4, column=0, columnspan=2, sticky="new")
+
         return frame
+
+    def _build_shapefiles_card(self, master: ctk.CTkBaseClass) -> ctk.CTkFrame:
+        """Rutas a los .shp de subcuencas y reach usados por la pestaña
+        Results para el mapa estático de selección (ver ui/tab_results.py).
+        Persistidas en project.json, no en AppPaths -- a diferencia del
+        ejecutable SWAT (una sola ruta por máquina), cada proyecto/cuenca
+        tiene sus propios shapefiles."""
+        card = ctk.CTkFrame(master)
+        card.columnconfigure(0, weight=1)
+
+        title = ctk.CTkLabel(
+            card,
+            text=self._config.text("project.shapefiles_title"),
+            text_color=self._colors.get("text_primary"),
+            font=ctk.CTkFont(size=14, weight="bold"),
+            anchor="w",
+        )
+        title.grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
+
+        self._subbasin_shp_field, self._subbasin_shp_browse_button, self._subbasin_shp_error_label = (
+            self._build_shp_row(card, row=1, label_key="project.subbasin_shp_label", on_browse=self._on_browse_subbasin_shp)
+        )
+        self._reach_shp_field, self._reach_shp_browse_button, self._reach_shp_error_label = self._build_shp_row(
+            card, row=3, label_key="project.reach_shp_label", on_browse=self._on_browse_reach_shp
+        )
+
+        return card
+
+    def _build_shp_row(
+        self, master: ctk.CTkBaseClass, *, row: int, label_key: str, on_browse
+    ) -> tuple[ReadOnlyField, ctk.CTkButton, ctk.CTkLabel]:
+        row_frame = ctk.CTkFrame(master, fg_color="transparent")
+        row_frame.grid(row=row, column=0, sticky="ew", padx=16, pady=(0, 4))
+        row_frame.columnconfigure(0, weight=1)
+
+        field = ReadOnlyField(row_frame, self._config, label_key)
+        field.grid(row=0, column=0, sticky="ew")
+
+        browse_button = ctk.CTkButton(row_frame, text=self._config.text("config.browse"), command=on_browse, width=90)
+        browse_button.grid(row=0, column=1, sticky="ne", padx=(12, 0))
+
+        error_label = ctk.CTkLabel(master, text="", text_color=self._colors.get("error"), anchor="w")
+        error_label.grid(row=row + 1, column=0, sticky="ew", padx=16, pady=(0, 12))
+
+        return field, browse_button, error_label
+
+    def _on_browse_subbasin_shp(self) -> None:
+        self._browse_shapefile(
+            attr="subbasin_shp_path", field=self._subbasin_shp_field, error_label=self._subbasin_shp_error_label
+        )
+
+    def _on_browse_reach_shp(self) -> None:
+        self._browse_shapefile(
+            attr="reach_shp_path", field=self._reach_shp_field, error_label=self._reach_shp_error_label
+        )
+
+    def _browse_shapefile(self, *, attr: str, field: ReadOnlyField, error_label: ctk.CTkLabel) -> None:
+        if self._project_dir is None:
+            return
+        selected = filedialog.askopenfilename(filetypes=[("Shapefile", "*.shp")])
+        if not selected:
+            return
+
+        error_key = validate_shapefile_path(selected)
+        if error_key is not None:
+            error_label.configure(text=self._config.text(error_key))
+            return
+        error_label.configure(text="")
+
+        setattr(self._metadata, attr, str(Path(selected)))
+        save_project(self._project_dir, self._metadata)
+        field.set_value(getattr(self._metadata, attr))
+        self._on_project_opened(self._project_dir, self._metadata)
 
     def _on_open_clicked(self) -> None:
         selected = filedialog.askdirectory()
@@ -156,6 +240,11 @@ class ProjectTab(ctk.CTkFrame):
         self._path_label.configure(text=str(self._project_dir))
         self._name_field.set_value(self._metadata.name)
         self._description_field.set_value(self._metadata.description)
+        not_configured = self._config.text("project.shp_not_configured")
+        self._subbasin_shp_field.set_value(self._metadata.subbasin_shp_path or not_configured)
+        self._reach_shp_field.set_value(self._metadata.reach_shp_path or not_configured)
+        self._subbasin_shp_error_label.configure(text="")
+        self._reach_shp_error_label.configure(text="")
 
     def set_locked(self, locked: bool) -> None:
         """Deshabilita Open/Change/Edit mientras Summary corre un Run: cambiar
@@ -165,3 +254,5 @@ class ProjectTab(ctk.CTkFrame):
         self._open_button.configure(state=state)
         self._change_button.configure(state=state)
         self._edit_button.configure(state=state)
+        self._subbasin_shp_browse_button.configure(state=state)
+        self._reach_shp_browse_button.configure(state=state)

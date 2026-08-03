@@ -6,6 +6,7 @@ from scenarios.project import (
     is_valid_project_dir,
     load_project,
     save_project,
+    validate_shapefile_path,
 )
 
 
@@ -57,3 +58,40 @@ def test_save_project_preserves_summary_when_editing_metadata_only(tmp_path: Pat
     assert final.wetlands is not None
     assert final.wetlands.generated_at == "2026-07-30T12:00:00+00:00"
     assert final.wetlands.stats == {"subbasin_count": 3}
+
+
+def test_save_and_load_project_round_trips_shapefile_paths(tmp_path: Path) -> None:
+    metadata = ProjectMetadata(
+        name="Buffalo", reach_shp_path=r"C:\gis\riv1.shp", subbasin_shp_path=r"C:\gis\subs1.shp"
+    )
+    save_project(tmp_path, metadata)
+
+    reloaded = load_project(tmp_path)
+
+    assert reloaded.reach_shp_path == r"C:\gis\riv1.shp"
+    assert reloaded.subbasin_shp_path == r"C:\gis\subs1.shp"
+
+
+def test_load_project_defaults_shapefile_paths_to_none(tmp_path: Path) -> None:
+    metadata = load_project(tmp_path)
+
+    assert metadata.reach_shp_path is None
+    assert metadata.subbasin_shp_path is None
+
+
+def test_validate_shapefile_path_valid(tmp_path: Path) -> None:
+    shp = tmp_path / "subs1.shp"
+    shp.write_text("fake shapefile")
+
+    assert validate_shapefile_path(shp) is None
+
+
+def test_validate_shapefile_path_missing_file(tmp_path: Path) -> None:
+    assert validate_shapefile_path(tmp_path / "missing.shp") == "project.error.invalid_shp"
+
+
+def test_validate_shapefile_path_wrong_extension(tmp_path: Path) -> None:
+    not_shp = tmp_path / "subs1.txt"
+    not_shp.write_text("not a shapefile")
+
+    assert validate_shapefile_path(not_shp) == "project.error.invalid_shp"

@@ -6,6 +6,16 @@ sobre fondo plano, y la pestaña Summary debe poder quedar deshabilitada
 hasta que haya un proyecto abierto. Registrar una pestaña nueva es una
 sola llamada a add_tab(), para que agregar futuras pestañas no toque el
 resto de la UI.
+
+La barra en sí (`_bar`) es una `CTkScrollableFrame` horizontal, no un
+`CTkFrame` plano con `pack(side="left")`: con seis pestañas (agosto 2026,
+al sumar Results) el ancho requerido por los botones ya supera una
+ventana de pantalla chica (980px), y un `CTkFrame` no envuelve ni permite
+scroll -- las últimas pestañas quedaban directamente fuera del área
+visible, sin forma de llegar a ellas. `CTkScrollableFrame` soporta
+`orientation="horizontal"` (customtkinter >= 6, ya en el env `swat`) y
+muestra su propia scrollbar horizontal solo cuando el contenido no entra,
+sin depender de que la ventana sea suficientemente ancha.
 """
 from __future__ import annotations
 
@@ -14,6 +24,7 @@ import customtkinter as ctk
 from config.settings import ConfigManager
 
 _UNDERLINE_HEIGHT = 2
+_BAR_HEIGHT = 56
 
 
 class TabBar(ctk.CTkFrame):
@@ -22,7 +33,9 @@ class TabBar(ctk.CTkFrame):
         self._config = config
         self._colors = config.theme.get("AppPalette", {})
 
-        self._bar = ctk.CTkFrame(self, fg_color="transparent")
+        self._bar = ctk.CTkScrollableFrame(
+            self, fg_color="transparent", orientation="horizontal", height=_BAR_HEIGHT
+        )
         self._bar.pack(fill="x")
 
         self._content = ctk.CTkFrame(self, fg_color="transparent")

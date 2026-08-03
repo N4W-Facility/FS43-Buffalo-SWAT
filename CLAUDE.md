@@ -32,19 +32,41 @@ de la visualización comparativa, no en el cómputo hidrológico en sí.
 ## Estado actual de la implementación
 
 La interfaz (`ui/`) fue reconstruida desde cero (agosto 2026) y `main.py`
-arranca una app funcional de cuatro pestañas. Dependencia nueva: **matplotlib**
-(en el env conda `swat`), usada solo por `viz/land_use_chart.py`, sin
-`pyplot` (se construye `Figure` directo y se embebe con
-`FigureCanvasTkAgg`, para no arrastrar el estado global de pyplot en una
-app de escritorio).
+arranca una app funcional de seis pestañas. Dependencias nuevas (env conda
+`swat`): **matplotlib**, usada por `viz/land_use_chart.py`, `viz/rch_chart.py`
+y `viz/shapefile_map.py`, sin `pyplot` (se construye `Figure` directo y se
+embebe con `FigureCanvasTkAgg`, para no arrastrar el estado global de
+pyplot en una app de escritorio); y **pyshp** (`shapefile`), usada solo por
+`viz/shapefile_reader.py` para leer los `.shp` de subcuencas/reach del
+mapa de la pestaña Results — sin GDAL/Fiona (decisión explícita del
+usuario, 2026-08-03: instalación más liviana en Windows que geopandas para
+el único uso que necesita, dibujar polígonos/polilíneas estáticos).
 
 - **`ui/app.py`**: ventana raíz, tema `resources/theme/swat_light.json`,
   `TabBar` propia (`ui/tabs.py`, no `CTkTabview`) con soporte de
-  pestañas deshabilitadas hasta que haya un proyecto abierto.
+  pestañas deshabilitadas hasta que haya un proyecto abierto. La barra en
+  sí es una `CTkScrollableFrame` horizontal (no un `CTkFrame` con
+  `pack(side="left")` plano): con seis pestañas el ancho requerido por los
+  botones ya no entra en una ventana de pantalla chica, y sin scroll las
+  últimas pestañas quedaban fuera del área visible sin forma de
+  alcanzarlas (bug real, detectado 2026-08-03 al agregar la pestaña
+  Results — ver más abajo). `_WINDOW_SIZE` en `ui/app.py` sigue en
+  `980x800` a propósito (amigable con pantallas chicas): la barra scrollea
+  su propio contenido en vez de depender de agrandar la ventana para que
+  quepan más pestañas a futuro.
 - **Pestaña Project** (`ui/tab_project.py`): abrir/cambiar carpeta de
   proyecto (cualquier carpeta con `TxtInOut/` directo — hoy la app **no
   distingue** entre modelo de referencia calibrado y copia de escenario,
   ver aviso de aislamiento más abajo), editar metadata (`project.json`).
+  También aloja, en una tarjeta aparte ("Shapefiles"), las rutas a los
+  `.shp` de subcuencas y reach que usa el mapa de la pestaña Results
+  (`ProjectMetadata.subbasin_shp_path` / `.reach_shp_path`, nuevos campos
+  en `project.json` — a diferencia del ejecutable SWAT en
+  `config.settings.AppPaths`, una ruta por máquina, estas son por
+  proyecto/cuenca). Mismo patrón campo de solo lectura + botón "Browse..."
+  que la ruta del ejecutable en Run, validado con
+  `scenarios.project.validate_shapefile_path` (solo existencia + extensión
+  `.shp`; pyshp resuelve `.dbf`/`.shx` junto a él).
 - **Pestaña Summary** (`ui/tab_summary.py`): corre en hilo de fondo
   (patrón obligatorio de la sección siguiente) los resúmenes de wetlands
   (`swat_io.summary.summarize_project`) y HRU/land-use
@@ -127,8 +149,17 @@ app de escritorio).
   Wetlands — CLAUDE.md exige hilo de fondo para cualquier operación que
   pueda escalar a "miles de .hru". Cada HRU se escribe todo-o-nada (si un
   parámetro de esa HRU falla, no se escribe ningún cambio de esa HRU,
-  pero las demás HRU del lote sí siguen). Sin edición inline de celdas
-  todavía (a diferencia de Wetlands): no se pidió en esta ronda.
+  pero las demás HRU del lote sí siguen). También soporta edición inline
+  de celdas, igual que Wetlands (decisión explícita del usuario,
+  2026-08-03): doble clic sobre el id de HRU (columna `#0`) sigue abriendo
+  `HRUEditorWindow` (equivalente al botón "Edit in .hru"), pero doble clic
+  sobre cualquier otra celda (un parámetro puntual) superpone un `Entry`
+  sobre la celda para editar ese valor ahí mismo — sin rango declarado
+  (a diferencia de la edición inline de Wetlands, que valida contra
+  `wetland_params.yaml`), solo valida que sea numérico, igual que "Load
+  CSV". El resultado va al mismo staging en memoria `dict[(subbasin_id,
+  hru_id), dict]` marcado con `*`, así que también espera a Materialize
+  para escribirse de verdad.
 - **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`.
 - **Pestaña Run** (`ui/tab_run.py` + `engine/run.py`): quinta pestaña,
   habilitada al abrir proyecto igual que Wetlands/HRUs/Summary. Cubre el
@@ -149,12 +180,18 @@ app de escritorio).
   — una corrida real de SWAT puede tomar del orden de minutos. Esa función
   copia el ejecutable configurado a `TxtInOut/<target_executable_name>`
   (nunca renombra ni modifica el archivo original en su ubicación) y lo
-  ejecuta con `cwd` en `TxtInOut`, capturando stdout/stderr completos.
-  Éxito/error se determina únicamente por el exit code del proceso (0 =
-  éxito) — decisión explícita del usuario (2026-07-31): no se intenta
-  inferir éxito a partir de la presencia o contenido de `output.std`.
-  Terminada la corrida, la pestaña muestra un log de solo lectura con
-  stdout+stderr y un mensaje de éxito o de error con el exit code.
+  ejecuta con `cwd` en `TxtInOut`. El log de la pestaña se llena en tiempo
+  real (decisión explícita del usuario, 2026-08-03: antes se leía todo de
+  una sola vez al terminar el proceso) — `run_scenario` usa `Popen` en vez
+  de `run`, con un hilo por stream (`stdout`/`stderr`) leyendo línea por
+  línea (un único hilo síncrono arriesga bloquear el proceso hijo si el
+  otro pipe se llena primero) y reportando el acumulado hasta el momento
+  vía el mismo `report_progress` que ya usa `ui.tasks.run_in_background`
+  — la UI conecta `on_progress` directo a `_set_log` en vez de al
+  `status_label`. Éxito/error se determina únicamente por el exit code del
+  proceso (0 = éxito) — decisión explícita del usuario (2026-07-31): no se
+  intenta inferir éxito a partir de la presencia o contenido de
+  `output.std`, y eso no cambió con el streaming.
   Bloquea navegación mientras corre (`App._on_run_tab_run_state_changed`,
   mismo mecanismo que las demás operaciones de fondo). Sin parseo de
   `output.*` — eso queda para la pieza de `viz/` de comparación línea
@@ -183,9 +220,72 @@ app de escritorio).
   contra un `file.cio` real (`03-Models/Buffalo/Buffalo_calibrated_annual`)
   para confirmar que el ancho de columna se preserva y el resto del
   archivo queda byte a byte intacto.
-- **`viz/`**: solo `land_use_chart.py` (coberturas por subcuenca, Summary).
-  Sin empezar: gráficas comparativas línea base vs. escenario (caudal,
-  sedimento, nutrientes) — el motivo original del paquete.
+- **Pestaña Results (`output.rch`)** (`ui/tab_results.py` +
+  `swat_io/rch_parser.py` + `viz/rch_chart.py` + `viz/shapefile_map.py` +
+  `viz/shapefile_reader.py`): sexta pestaña, cubre el paso 3 del resumen
+  del proyecto para `output.rch` específicamente (caudal y cargas por
+  tramo) — el resto de `output.*` sigue sin empezar. A diferencia de
+  Wetlands/HRUs/Run, queda habilitada con el proyecto abierto aunque
+  `output.rch` todavía no exista (el usuario puede no haber corrido SWAT
+  todavía): en ese caso el botón "Organize .rch" queda deshabilitado con
+  un hint, sin bloquear la pestaña.
+
+  `output.rch` es texto de ancho fijo, pero su línea de encabezado (nombres
+  de columna + unidad, ej. `FLOW_OUTcms`) no se puede separar de forma
+  confiable por espacios: cuando el nombre+unidad excede el ancho
+  reservado para esa columna, queda pegado al siguiente sin espacio (ej.
+  `SETTLPSTmgRESUSP_PSTmgDIFFUSEPSTmgREACBEDPSTmg`, cuatro nombres
+  seguidos). En vez de parsear ese encabezado roto,
+  `swat_io.rch_parser.RCH_VARIABLE_COLUMNS` fija las 47 variables en su
+  orden estable de SWAT2012 rev670 (verificado contando valores numéricos
+  por fila de datos contra un `output.rch` real de
+  `03-Models/Buffalo/Buffalo_calibrated_annual`, confirmado con el
+  usuario). `parse_rch_file` devuelve un DataFrame crudo (una fila por
+  reach y paso de tiempo); `build_rch_timeseries` le agrega una columna
+  `date` real usando el periodo/frecuencia de `file.cio`
+  (`swat_io.cio_parser.parse_run_settings`) y descarta las filas de
+  resumen que SWAT agrega y que NO son una fecha real (confirmado
+  explícitamente con el usuario contra el archivo real, no asumido):
+  en salida *Yearly* hay una fila extra por reach al final con
+  `MON` = años promediados en vez de un año calendario
+  (`_YEARLY_SUMMARY_MON_THRESHOLD` la distingue por magnitud); en salida *Monthly*
+  hay una 13ª fila por año con `MON` = año en vez de mes 1-12. En *Daily*
+  el año de cada bloque se detecta por wrap-around de `MON` (día juliano
+  que vuelve a 1), sin asumir bisiestos porque el archivo ya trae el
+  conteo correcto de filas por año. "Organize .rch" corre esto en hilo de
+  fondo (`ui.tasks.run_in_background`, `App._on_results_tab_run_state_changed`
+  bloquea navegación igual que Summary/HRU/Run — parsear un `output.rch`
+  Daily de muchos años puede no ser instantáneo) y escribe un CSV por
+  reach en `tool_outputs/rch_timeseries/` (`export_rch_timeseries_csvs`):
+  una fila por fecha, todas las variables como columna — sin lista curada
+  (decisión explícita del usuario, mismo criterio que HRUs). No toca
+  ningún archivo de `TxtInOut`, así que a diferencia de Materialize en
+  Wetlands/HRUs no pide confirmación. Al reabrir el proyecto, si esos CSV
+  ya existen de una corrida anterior se releen directo
+  (`read_rch_timeseries_dir`) sin volver a parsear el `.rch` — mismo
+  patrón de caché que Summary con `land_use_by_subbasin.csv`.
+
+  Selector de reach + selector de variable (las 47 de
+  `RCH_VARIABLE_COLUMNS`, por defecto `FLOW_OUT`) grafican la serie de
+  tiempo (`viz/rch_chart.py`, mismo patrón sin-pyplot que
+  `land_use_chart.py`). El mapa chico (`viz/shapefile_map.py`, geometría de
+  `viz/shapefile_reader.py`) es puramente estático — sin click-to-select,
+  pedido explícito del usuario —: dibuja las subcuencas (relleno) y los
+  reach (línea) de los `.shp` configurados en Project, y solo resalta el
+  elemento cuyo id coincide con la selección de reach/subcuenca actual. El
+  campo de id **no se llama igual en los dos shapefiles** pese a
+  identificar el mismo tramo/subcuenca (confirmado explícitamente por el
+  usuario contra shapefiles reales, no asumido): `GRIDCODE` en el shp de
+  subcuencas, `ARCID` en el shp de reach — `SUBBASIN_ID_FIELD` /
+  `REACH_ID_FIELD` en `shapefile_reader.py`. La geometría se lee una sola
+  vez por `set_project` (no en cada cambio de selector) y se cachea en
+  memoria; solo el resaltado cambia al redibujar.
+- **`viz/`**: `land_use_chart.py` (coberturas por subcuenca, Summary),
+  `rch_chart.py` (serie de tiempo por reach, Results),
+  `shapefile_reader.py` + `shapefile_map.py` (mapa estático de
+  subcuencas/reach, Results). Sin empezar: gráficas comparativas línea
+  base vs. escenario superpuestas (dos corridas a la vez) — el motivo
+  original del paquete; hoy Results grafica una sola corrida por vez.
 
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
@@ -227,7 +327,7 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 | `.sub` | Vincula la subcuenca con el HRU/área que drena al humedal. Se lee para construir la UI de selección de subcuencas con humedal; no se edita por escenario. |
 | `.bsn` | Parámetros globales de cuenca. Fuera de alcance: nunca se modifica por escenario. |
 | `.fig` / `.cio` | Topología del watershed y control maestro de la corrida (fechas, opciones de impresión). Se mantienen intactos entre escenarios salvo que el usuario cambie explícitamente el periodo simulado. |
-| `output.rch` | Caudal y carga por tramo de río. Salida principal para comparación de caudal. |
+| `output.rch` | Caudal y carga por tramo de río. Salida principal para comparación de caudal. Organizada en serie de tiempo por reach (CSV + gráfica + mapa) desde la pestaña Results — ver "Estado actual". |
 | `output.sub` | Balance por subcuenca. |
 | `output.hru` | Balance por unidad de respuesta hidrológica. |
 | `output.mgt` | Operaciones de manejo por HRU; se lee como texto plano junto con las demás salidas. |

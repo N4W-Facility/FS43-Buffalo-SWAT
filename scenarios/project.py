@@ -35,11 +35,26 @@ class ProjectMetadata:
     description: str = ""
     wetlands: SummaryEntry | None = None
     hru: SummaryEntry | None = None
+    reach_shp_path: str | None = None
+    subbasin_shp_path: str | None = None
 
 
 def is_valid_project_dir(path: Path | str) -> bool:
     """Un proyecto válido es cualquier carpeta que contenga TxtInOut/ directamente."""
     return (Path(path) / "TxtInOut").is_dir()
+
+
+def validate_shapefile_path(path: Path | str) -> str | None:
+    """Devuelve una clave de error de en.json si path no apunta a un .shp existente, o None si es válido.
+
+    Solo valida el .shp en sí (pyshp resuelve .dbf/.shx buscándolos junto a
+    él con el mismo nombre base) -- no lee su contenido ni sus campos, eso
+    es responsabilidad de viz.shapefile_reader al momento de dibujar.
+    """
+    candidate = Path(path)
+    if candidate.suffix.lower() != ".shp" or not candidate.is_file():
+        return "project.error.invalid_shp"
+    return None
 
 
 def project_file_path(project_dir: Path | str) -> Path:
@@ -81,6 +96,8 @@ def _metadata_to_dict(metadata: ProjectMetadata) -> dict:
     return {
         "name": metadata.name,
         "description": metadata.description,
+        "reach_shp_path": metadata.reach_shp_path,
+        "subbasin_shp_path": metadata.subbasin_shp_path,
         "summary": summary,
     }
 
@@ -93,6 +110,8 @@ def _metadata_from_dict(data: object) -> ProjectMetadata:
     return ProjectMetadata(
         name=data.get("name") or "",
         description=data.get("description") or "",
+        reach_shp_path=data.get("reach_shp_path") or None,
+        subbasin_shp_path=data.get("subbasin_shp_path") or None,
         wetlands=_summary_entry_from_dict(summary.get("wetlands")),
         hru=_summary_entry_from_dict(summary.get("hru")),
     )
