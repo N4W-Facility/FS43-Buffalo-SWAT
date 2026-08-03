@@ -32,22 +32,26 @@ de la visualización comparativa, no en el cómputo hidrológico en sí.
 ## Estado actual de la implementación
 
 La interfaz (`ui/`) fue reconstruida desde cero (agosto 2026) y `main.py`
-arranca una app funcional de seis pestañas. Dependencias nuevas (env conda
+arranca una app funcional de siete pestañas. Dependencias nuevas (env conda
 `swat`): **matplotlib**, usada por `viz/land_use_chart.py`, `viz/rch_chart.py`
 y `viz/shapefile_map.py`, sin `pyplot` (se construye `Figure` directo y se
 embebe con `FigureCanvasTkAgg`, para no arrastrar el estado global de
-pyplot en una app de escritorio); y **pyshp** (`shapefile`), usada solo por
+pyplot en una app de escritorio); **pyshp** (`shapefile`), usada solo por
 `viz/shapefile_reader.py` para leer los `.shp` de subcuencas/reach del
 mapa de la pestaña Results — sin GDAL/Fiona (decisión explícita del
 usuario, 2026-08-03: instalación más liviana en Windows que geopandas para
-el único uso que necesita, dibujar polígonos/polilíneas estáticos).
+el único uso que necesita, dibujar polígonos/polilíneas estáticos); y
+**sqlite3** (librería estándar, cero instalación nueva) usada por
+`swat_io/hru_output_parser.py` como destino de la pestaña HRU Results en
+vez de CSV — ver esa pestaña más abajo.
 
 - **`ui/app.py`**: ventana raíz, tema `resources/theme/swat_light.json`,
   `TabBar` propia (`ui/tabs.py`, no `CTkTabview`) con soporte de
   pestañas deshabilitadas hasta que haya un proyecto abierto. La barra en
   sí es una `CTkScrollableFrame` horizontal (no un `CTkFrame` con
-  `pack(side="left")` plano): con seis pestañas el ancho requerido por los
-  botones ya no entra en una ventana de pantalla chica, y sin scroll las
+  `pack(side="left")` plano): desde seis pestañas el ancho requerido por
+  los botones ya no entra en una ventana de pantalla chica (ahora siete,
+  con HRU Results), y sin scroll las
   últimas pestañas quedaban fuera del área visible sin forma de
   alcanzarlas (bug real, detectado 2026-08-03 al agregar la pestaña
   Results — ver más abajo). `_WINDOW_SIZE` en `ui/app.py` sigue en
@@ -280,8 +284,77 @@ el único uso que necesita, dibujar polígonos/polilíneas estáticos).
   `REACH_ID_FIELD` en `shapefile_reader.py`. La geometría se lee una sola
   vez por `set_project` (no en cada cambio de selector) y se cachea en
   memoria; solo el resaltado cambia al redibujar.
+- **Pestaña HRU Results (`output.hru`)** (`ui/tab_hru_results.py` +
+  `swat_io/hru_output_parser.py`): séptima pestaña, cubre el paso 3 del
+  resumen del proyecto para `output.hru` (balance por HRU) — pedido
+  explícito del usuario (2026-08-03): serie de tiempo por subcuenca, por
+  HRU y por variable, **sin nada espacial** (a diferencia de Results/.rch,
+  esta pestaña no tiene mapa). A diferencia de todas las pestañas
+  anteriores, el destino de "Organize" no es CSV sino una única base
+  **SQLite** (`tool_outputs/hru_timeseries.db`, tabla ancha `date, sub,
+  hru` + 80 columnas de variable): `output.hru` puede tener miles de HRU
+  (una subcuenca tiene N HRU, a diferencia de un reach por subcuenca en
+  `output.rch`) y en salida Daily puede pesar más de 1GB — un CSV por HRU
+  degrada en cantidad de archivos, y cargar el archivo completo a un
+  DataFrame antes de escribir no entra cómodamente en memoria. `sqlite3` es
+  librería estándar de Python (cero dependencias nuevas, misma filosofía
+  liviana que ya llevó a elegir pyshp en vez de geopandas) y permite
+  consultar una sola serie (un HRU, una variable) sin cargar el resto —
+  tanto `swat_io/hru_output_parser.py` como `ui/tab_hru_results.py` son
+  streaming de punta a punta: nunca hay un DataFrame con el archivo
+  completo en memoria, ni siquiera del lado de la UI post-procesamiento
+  (los selectores subcuenca → HRU consultan SQLite bajo demanda, no un
+  DataFrame ya cargado). Probado de punta a punta contra un `output.hru`
+  Daily real de 1.47M filas / 1350 HRU (Crooked_daily): ~130s en hilo de
+  fondo, sin congelar la ventana.
+
+  `output.hru` es texto de ancho fijo con el mismo problema estructural que
+  `output.rch` (header con nombres pegados, no parseable) más uno propio:
+  a diferencia de `output.rch`, donde las 47 variables SÍ vienen separadas
+  por espacios de forma confiable, en `output.hru` las 80 variables
+  numéricas (tras un prefijo identificador `LULC/HRU/GIS/SUB/MGT/MON` de
+  34 caracteres que sí tokeniza bien por espacios) NO tienen separador
+  confiable entre columnas adyacentes cuando un valor llena todo su ancho
+  fijo (ej. año `MON=2017` pegado directo al valor de `AREA` siguiente,
+  sin espacio) o cuando un valor negativo en un campo normalmente positivo
+  angosta el margen que en el resto de las filas separaba dos columnas.
+  `HRU_OUTPUT_VARIABLE_COLUMNS`/`_VARIABLE_COLSPECS` (offsets de carácter
+  exactos por columna, no por header) se derivaron y validaron
+  programáticamente contra el contenido **completo** de los 31 `output.hru`
+  reales disponibles en el workspace (~4.95M filas combinadas, 0 errores de
+  parseo) — una muestra más chica resultó insuficiente: casos de signo
+  negativo poco frecuentes en algunos proyectos rompían límites inferidos
+  de una muestra parcial, descubierto iterativamente contra los archivos
+  reales, no asumido de antemano. Campos que desbordan su ancho fijo se
+  imprimen como `**********` (relleno de asteriscos, visto en un archivo
+  real) y se guardan como `NaN` en vez de descartar la fila entera.
+
+  La reconstrucción de fecha reutiliza la misma lógica que
+  `build_rch_timeseries` (wraparound de MON, umbral de fila-resumen
+  "average annual" en Yearly) pero **en streaming** — un diccionario por
+  HRU con el último MON visto, en vez de `groupby` sobre un DataFrame ya
+  completo — verificada contra un `output.hru` Yearly real (con fila de
+  resumen "average annual", MON no-calendario) y un `output.hru` Daily
+  real (sin fila de resumen, wraparound confirmado por HRU). Monthly no se
+  pudo verificar contra un archivo real (ningún proyecto disponible usa
+  `IPRINT=0`) — reutiliza el criterio ya confirmado por el usuario para
+  `output.rch` (13ª fila de resumen con MON = año), sin verificación
+  independiente para `output.hru`.
+
+  Exporta dos formas de CSV, según lo pedido explícitamente por el
+  usuario: la serie de un único HRU+variable ("Export this series"), o una
+  variable para todas las HRU de una subcuenca en formato ancho — fecha +
+  una columna `hru_<id>` por cada HRU ("Export variable for all HRUs in
+  subbasin"). No toca ningún archivo de `TxtInOut`, igual que Results/.rch,
+  así que "Organize .hru output" no pide confirmación. Deshabilitada hasta
+  que haya un proyecto abierto; igual que Results/.rch, queda habilitada
+  aunque `output.hru` todavía no exista (el botón Organize queda
+  deshabilitado con un hint en ese caso).
 - **`viz/`**: `land_use_chart.py` (coberturas por subcuenca, Summary),
-  `rch_chart.py` (serie de tiempo por reach, Results),
+  `rch_chart.py` (serie de tiempo por reach, Results — reutilizada tal
+  cual, sin cambios, por HRU Results: la función de render ya era genérica,
+  sin acoplamiento a reach/rch, así que no se creó un módulo `hru_chart.py`
+  duplicado),
   `shapefile_reader.py` + `shapefile_map.py` (mapa estático de
   subcuencas/reach, Results). Sin empezar: gráficas comparativas línea
   base vs. escenario superpuestas (dos corridas a la vez) — el motivo
@@ -329,7 +402,7 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 | `.fig` / `.cio` | Topología del watershed y control maestro de la corrida (fechas, opciones de impresión). Se mantienen intactos entre escenarios salvo que el usuario cambie explícitamente el periodo simulado. |
 | `output.rch` | Caudal y carga por tramo de río. Salida principal para comparación de caudal. Organizada en serie de tiempo por reach (CSV + gráfica + mapa) desde la pestaña Results — ver "Estado actual". |
 | `output.sub` | Balance por subcuenca. |
-| `output.hru` | Balance por unidad de respuesta hidrológica. |
+| `output.hru` | Balance por unidad de respuesta hidrológica. Organizado en base SQLite (no CSV, ver pestaña HRU Results) y explorado por subcuenca/HRU/variable (gráfica + export CSV) desde la pestaña HRU Results — ver "Estado actual". |
 | `output.mgt` | Operaciones de manejo por HRU; se lee como texto plano junto con las demás salidas. |
 | `output.std` | Resumen general de la corrida. |
 | `.hru` (por HRU) | Parámetros físicos/agronómicos de cada HRU (`HRU_FR`, `SLSUBBSN`, `OV_N`, `CANMX`, `ESCO`, `EPCO`, etc.). Hoy se usa en modo lectura para inventario e informes de cobertura (ver "Módulo swat_io.hru" más abajo); la librería sí soporta escritura controlada para uso técnico/mantenimiento, pero la UI de escenarios todavía no edita `.hru`. |

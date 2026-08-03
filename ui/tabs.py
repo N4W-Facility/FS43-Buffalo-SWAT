@@ -8,8 +8,9 @@ sola llamada a add_tab(), para que agregar futuras pestañas no toque el
 resto de la UI.
 
 La barra en sí (`_bar`) es una `CTkScrollableFrame` horizontal, no un
-`CTkFrame` plano con `pack(side="left")`: con seis pestañas (agosto 2026,
-al sumar Results) el ancho requerido por los botones ya supera una
+`CTkFrame` plano con `pack(side="left")`: desde que se sumó Results
+(agosto 2026, seis pestañas en ese momento, ahora siete con HRU Results)
+el ancho requerido por los botones ya supera una
 ventana de pantalla chica (980px), y un `CTkFrame` no envuelve ni permite
 scroll -- las últimas pestañas quedaban directamente fuera del área
 visible, sin forma de llegar a ellas. `CTkScrollableFrame` soporta

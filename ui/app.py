@@ -11,6 +11,7 @@ from config.settings import ConfigManager
 from scenarios.project import ProjectMetadata
 
 from .tab_hru import HRUsTab
+from .tab_hru_results import HruResultsTab
 from .tab_project import ProjectTab
 from .tab_results import ResultsTab
 from .tab_run import RunTab
@@ -47,6 +48,9 @@ class App(ctk.CTk):
         self._results_tab = ResultsTab(
             self._tab_bar, config, on_run_state_changed=self._on_results_tab_run_state_changed
         )
+        self._hru_results_tab = HruResultsTab(
+            self._tab_bar, config, on_run_state_changed=self._on_hru_results_tab_run_state_changed
+        )
 
         self._tab_bar.add_tab("project", "tab.project", self._project_tab, enabled=True)
         self._tab_bar.add_tab("summary", "tab.summary", self._summary_tab, enabled=False)
@@ -54,6 +58,7 @@ class App(ctk.CTk):
         self._tab_bar.add_tab("hru", "tab.hru", self._hru_tab, enabled=False)
         self._tab_bar.add_tab("run", "tab.run", self._run_tab, enabled=False)
         self._tab_bar.add_tab("results", "tab.results", self._results_tab, enabled=False)
+        self._tab_bar.add_tab("hru_results", "tab.hru_results", self._hru_results_tab, enabled=False)
 
     def _on_project_opened(self, project_dir: Path, metadata: ProjectMetadata) -> None:
         self._tab_bar.set_enabled("summary", True)
@@ -66,6 +71,8 @@ class App(ctk.CTk):
         self._run_tab.set_project(project_dir)
         self._tab_bar.set_enabled("results", True)
         self._results_tab.set_project(project_dir, metadata)
+        self._tab_bar.set_enabled("hru_results", True)
+        self._hru_results_tab.set_project(project_dir)
 
     def _on_summary_run_state_changed(self, running: bool) -> None:
         """Mientras Summary corre un Run, bloquea toda navegación (pestañas y
@@ -95,5 +102,14 @@ class App(ctk.CTk):
         ResultsTab parsea output.rch entero en Organize: cambiar de
         proyecto a mitad de esa lectura dejaría el hilo de fondo operando
         sobre un project_dir que la UI ya no considera activo."""
+        self._tab_bar.set_navigation_locked(running)
+        self._project_tab.set_locked(running)
+
+    def _on_hru_results_tab_run_state_changed(self, running: bool) -> None:
+        """Mismo bloqueo que las demás operaciones de fondo, mientras
+        HruResultsTab parsea output.hru entero en Organize (puede pesar
+        más de 1GB en salida Daily): cambiar de proyecto a mitad de esa
+        lectura dejaría el hilo de fondo operando sobre un project_dir que
+        la UI ya no considera activo."""
         self._tab_bar.set_navigation_locked(running)
         self._project_tab.set_locked(running)

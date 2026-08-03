@@ -69,3 +69,14 @@ def read_text_with_fallback(
 def encode_text(text: str, encoding: str) -> bytes:
     """Codifica ``text`` con ``encoding`` (incluye soporte nativo para ``utf-8-sig``)."""
     return text.encode(encoding)
+
+
+def detect_encoding(path: str | Path, *, sample_size: int = 65536) -> str:
+    """Como read_text_with_fallback, pero solo lee ``sample_size`` bytes en vez
+    de todo el archivo -- para parsers en streaming (swat_io.hru_output_parser)
+    que necesitan saber con qué encoding abrir un archivo de salida SWAT que
+    puede pesar más de 1GB sin cargarlo entero en memoria primero.
+    """
+    with Path(path).open("rb") as fh:
+        raw = fh.read(sample_size)
+    return decode_bytes_with_fallback(raw).encoding
