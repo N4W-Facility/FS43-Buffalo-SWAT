@@ -9,8 +9,8 @@ resto de la UI.
 
 La barra en sí (`_bar`) es una `CTkScrollableFrame` horizontal, no un
 `CTkFrame` plano con `pack(side="left")`: desde que se sumó Results
-(agosto 2026, seis pestañas en ese momento, ahora siete con HRU Results)
-el ancho requerido por los botones ya supera una
+(agosto 2026, seis pestañas en ese momento, ahora ocho con HRU Results y
+Batch Scenarios) el ancho requerido por los botones ya supera una
 ventana de pantalla chica (980px), y un `CTkFrame` no envuelve ni permite
 scroll -- las últimas pestañas quedaban directamente fuera del área
 visible, sin forma de llegar a ellas. `CTkScrollableFrame` soporta

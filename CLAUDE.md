@@ -50,8 +50,8 @@ vez de CSV — ver esa pestaña más abajo.
   pestañas deshabilitadas hasta que haya un proyecto abierto. La barra en
   sí es una `CTkScrollableFrame` horizontal (no un `CTkFrame` con
   `pack(side="left")` plano): desde seis pestañas el ancho requerido por
-  los botones ya no entra en una ventana de pantalla chica (ahora siete,
-  con HRU Results), y sin scroll las
+  los botones ya no entra en una ventana de pantalla chica (ahora ocho,
+  con HRU Results y Batch Scenarios), y sin scroll las
   últimas pestañas quedaban fuera del área visible sin forma de
   alcanzarlas (bug real, detectado 2026-08-03 al agregar la pestaña
   Results — ver más abajo). `_WINDOW_SIZE` en `ui/app.py` sigue en
@@ -359,6 +359,94 @@ vez de CSV — ver esa pestaña más abajo.
   subcuencas/reach, Results). Sin empezar: gráficas comparativas línea
   base vs. escenario superpuestas (dos corridas a la vez) — el motivo
   original del paquete; hoy Results grafica una sola corrida por vez.
+
+- **Pestaña Batch Scenarios** (`ui/tab_batch.py` + `engine/batch_run.py` +
+  `scenarios/land_cover_config.py` + `scenarios/land_cover_reallocation.py`):
+  octava pestaña, para correr en batch una serie de escenarios de cambio de
+  cobertura (ej. "aumentar bosque a 10%, 20%, 30% del área de cada
+  subcuenca", tipo reforestación/deforestación) tomando el proyecto
+  abierto como referencia fija — pedido explícito del usuario
+  (2026-08-03), tras varias rondas de precisar la regla de negocio antes
+  de escribir código.
+
+  El % objetivo es relativo al área total de cada subcuenca (no al área de
+  la propia HRU) y se evalúa subcuenca por subcuenca de forma
+  independiente. Único parámetro que se toca: `HRU_FR` — nunca ningún otro
+  parámetro de la HRU, para no afectar la calibración
+  (`scenarios/land_cover_reallocation.py`, algoritmo puro, sin
+  dependencias de UI ni de disco). Reglas acordadas explícitamente con el
+  usuario:
+  - Si una subcuenca no tiene ninguna HRU con la cobertura objetivo, se
+    omite (crear una HRU nueva implicaría definir manejo/vegetación desde
+    cero, equivalente a recalibrar — fuera de alcance).
+  - Si el % actual de la cobertura objetivo ya es ≥ el % pedido, también
+    se omite: forzar una reducción sería deforestar, no reforestar, y no
+    tiene sentido para este caso de uso.
+  - El área que se quita a las coberturas donantes sigue una prioridad en
+    cascada configurable: cobertura (obligatoria) > pendiente (opcional) >
+    suelo (opcional). Sin un nivel de prioridad dado, ese nivel no
+    desempata y el reparto ahí es proporcional al peso actual; coberturas/
+    pendientes/suelos no listados en su nivel quedan en el último grupo de
+    ese nivel (empatan entre sí, después de todos los nombrados).
+  - El área que se agrega a la cobertura objetivo sigue la misma cascada
+    de pendiente/suelo (no hay nivel de cobertura, ya está fija en el
+    target). A diferencia de los donantes, el crecimiento no tiene un tope
+    natural por grupo, así que toda el área nueva va al primer grupo no
+    vacío en orden de prioridad (proporcional al peso actual dentro de ese
+    grupo), en vez de repartirse entre varios grupos.
+  - Cada porcentaje de la serie incremental (ej. 10/20/30%) se calcula
+    siempre de forma independiente desde el proyecto de referencia, nunca
+    encadenado (decisión explícita del usuario: evita arrastre de error de
+    redondeo y hace los escenarios directamente comparables entre sí).
+
+  La configuración (`scenarios/land_cover_config.py`,
+  `parse_land_cover_batch_csv`) viene de un CSV con columnas
+  `target_lulc`, `target_pct_series` (lista separada por comas, ej.
+  "10,20,30"), `donor_priority` (coberturas separadas por ">", ej.
+  "PAST>RNGB>AGRR"), y `slope_priority`/`soil_priority` opcionales (mismo
+  separador). v1 exige exactamente una fila (una sola cobertura objetivo
+  por batch; combinar varias en un mismo batch queda para una extensión
+  futura si hace falta).
+
+  La orquestación (`engine/batch_run.py`, `run_land_cover_batch`) toma el
+  proyecto abierto como referencia fija (nunca se modifica) y, por cada
+  paso de la serie: copia la carpeta completa del proyecto a
+  `<destino>/scenario_<pct>pct/` (reutiliza
+  `engine.configure.create_working_scenario`, así la copia queda con
+  `TxtInOut/` directo, lista para abrirse como proyecto en la app sin
+  pasos manuales — pedido explícito del usuario); calcula el plan de
+  reasignación y lo escribe en los `.hru` reales de esa copia
+  (`scenarios.hru_draft.write_hru_values`, reutilizado tal cual); ejecuta
+  swat2012.exe sobre la copia (`engine.run.run_scenario`, reutilizado tal
+  cual); y corre automáticamente el mismo post-procesamiento que hoy el
+  usuario dispara a mano desde Summary/Results/HRU Results
+  (`generar_resumen_coberturas`, `generar_resumen_humedales`, organizar
+  `output.rch` y `output.hru` — cada uno reutilizado sin cambios, y solo
+  si el archivo de salida correspondiente existe). Escribe además un
+  reporte por escenario (`tool_outputs/batch_report.json`: qué subcuencas
+  se modificaron y cuáles se omitieron y por qué). Un fallo puntual (copia,
+  cálculo, SWAT, o post-procesamiento) en un paso de la serie no aborta el
+  batch completo — queda registrado como error en ese paso y el batch
+  sigue con el siguiente.
+
+  Sin una lista curada de coberturas/pendientes/suelos válidos (a
+  diferencia de Wetlands y sus 20 campos fijos), el usuario no tiene forma
+  de saber de antemano qué escribir en el CSV — mismo problema que ya
+  resolvió "Export CSV" en HRUs. Por eso `scenarios/land_cover_config.py`
+  también expone `write_land_cover_batch_template_csv`
+  (+ `discover_land_cover_options`), que escanea el proyecto abierto y
+  genera un CSV de ejemplo ya válido con las coberturas/pendientes/suelos
+  que realmente existen ahí (no un blanco genérico) — botón "Download
+  template" de la pestaña, junto a "Load CSV".
+
+  La pestaña (`ui/tab_batch.py`) pide una carpeta destino y un CSV de
+  configuración, muestra una vista previa de los escenarios a correr, y
+  "Run batch" pide confirmación (copia carpetas y corre SWAT N veces) antes
+  de correr en hilo de fondo (`ui.tasks.run_in_background`, mismo patrón
+  obligatorio que Run/Results/HRU Results) con log en tiempo real.
+  Deshabilitada hasta que haya un proyecto abierto; bloquea navegación
+  mientras corre (`App._on_batch_tab_run_state_changed`, mismo mecanismo
+  que las demás operaciones de fondo).
 
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
