@@ -369,6 +369,56 @@ def export_single_series_csv(db_path: Path | str, hru: int, variable: str, dest_
     return dest_path
 
 
+def read_hru_variables(db_path: Path | str, hru: int, variables: list[str]) -> pd.DataFrame:
+    """Varias variables de un único HRU: filas = date, columnas = variables (en el orden
+    pedido). Usada tanto por "Export all variables" (variables=HRU_OUTPUT_VARIABLE_COLUMNS)
+    como por "Export selected variables" (subconjunto elegido por el usuario)."""
+    if not variables:
+        return pd.DataFrame()
+    conn = sqlite3.connect(db_path)
+    try:
+        columns_sql = ", ".join(f'"{name}"' for name in variables)
+        df = pd.read_sql_query(
+            f'SELECT date, {columns_sql} FROM {_TABLE} WHERE hru = ? ORDER BY date',
+            conn,
+            params=(hru,),
+            parse_dates=["date"],
+        )
+    finally:
+        conn.close()
+    return df.set_index("date")
+
+
+def export_hru_variables_csv(db_path: Path | str, hru: int, variables: list[str], dest_path: Path | str) -> Path:
+    """Exporta varias variables de un único HRU a CSV (date + una columna por variable)."""
+    dest_path = Path(dest_path)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    read_hru_variables(db_path, hru, variables).to_csv(dest_path, index_label="date")
+    return dest_path
+
+
+def read_hru_group_rows(db_path: Path | str, hru_ids: list[int], variable: str) -> pd.DataFrame:
+    """date, hru, AREA, <variable> para un conjunto de HRU -- usado por la exportación
+    comparativa entre escenarios de Batch (scenarios/comparison_export.py) para agregar
+    por grupo (cobertura/pendiente/suelo). No incluye "sub": el llamador ya conoce la
+    subcuenca de cada HRU por su propia clasificación (HRU es id global único en toda la
+    cuenca, ver docstring del módulo)."""
+    if not hru_ids:
+        return pd.DataFrame(columns=["date", "hru", "AREA", variable])
+    conn = sqlite3.connect(db_path)
+    try:
+        placeholders = ", ".join("?" * len(hru_ids))
+        df = pd.read_sql_query(
+            f'SELECT date, hru, "AREA", "{variable}" FROM {_TABLE} WHERE hru IN ({placeholders}) ORDER BY date',
+            conn,
+            params=hru_ids,
+            parse_dates=["date"],
+        )
+    finally:
+        conn.close()
+    return df
+
+
 def export_subbasin_variable_csv(db_path: Path | str, sub: int, variable: str, dest_path: Path | str) -> Path:
     """Exporta una variable de todas las HRU de una subcuenca a CSV (date +
     una columna por HRU)."""

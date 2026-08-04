@@ -341,15 +341,26 @@ vez de CSV — ver esa pestaña más abajo.
   `output.rch` (13ª fila de resumen con MON = año), sin verificación
   independiente para `output.hru`.
 
-  Exporta dos formas de CSV, según lo pedido explícitamente por el
-  usuario: la serie de un único HRU+variable ("Export this series"), o una
-  variable para todas las HRU de una subcuenca en formato ancho — fecha +
-  una columna `hru_<id>` por cada HRU ("Export variable for all HRUs in
-  subbasin"). No toca ningún archivo de `TxtInOut`, igual que Results/.rch,
-  así que "Organize .hru output" no pide confirmación. Deshabilitada hasta
-  que haya un proyecto abierto; igual que Results/.rch, queda habilitada
-  aunque `output.hru` todavía no exista (el botón Organize queda
-  deshabilitado con un hint en ese caso).
+  Exporta cuatro formas de CSV. Las dos originales, por variable: la serie
+  de un único HRU+variable ("Export this series"), o una variable para
+  todas las HRU de una subcuenca en formato ancho — fecha + una columna
+  `hru_<id>` por cada HRU ("Export variable for all HRUs in subbasin"). Y
+  dos más agregadas el 2026-08-04, pedido explícito del usuario para no
+  tener que repetir "Export this series" variable por variable cuando
+  quiere varias de una misma HRU: "Export all variables for this HRU"
+  (fecha + las 80 columnas, sin selección) y "Export selected
+  variables..." (abre `ui/variable_selection_window.py`, una ventana modal
+  con un checkbox por variable — `ui/variable_checklist.py`, reutilizada
+  también por el modo RCH/HRU de la ventana de comparación de Batch
+  Scenarios, ver más abajo — más "Select all"/"Clear"; al confirmar, la
+  pestaña hace su propio filedialog + export, igual que los otros tres
+  botones). Las cuatro comparten `swat_io.hru_output_parser.read_hru_variables`
+  (una única query parametrizada por lista de columnas) en vez de cuatro
+  funciones de lectura separadas. No toca ningún archivo de `TxtInOut`,
+  igual que Results/.rch, así que "Organize .hru output" no pide
+  confirmación. Deshabilitada hasta que haya un proyecto abierto; igual que
+  Results/.rch, queda habilitada aunque `output.hru` todavía no exista (el
+  botón Organize queda deshabilitado con un hint en ese caso).
 - **`viz/`**: `land_use_chart.py` (coberturas por subcuenca, Summary),
   `rch_chart.py` (serie de tiempo por reach, Results — reutilizada tal
   cual, sin cambios, por HRU Results: la función de render ya era genérica,
@@ -447,6 +458,81 @@ vez de CSV — ver esa pestaña más abajo.
   Deshabilitada hasta que haya un proyecto abierto; bloquea navegación
   mientras corre (`App._on_batch_tab_run_state_changed`, mismo mecanismo
   que las demás operaciones de fondo).
+
+  **Exportación comparativa entre escenarios** (`scenarios/comparison_export.py`
+  + `ui/scenario_comparison_window.py`, botón "Compare scenarios..." de la
+  pestaña, 2026-08-04): pedido explícito del usuario tras evaluar y
+  descartar los dos botones puntuales de HRU Results (ver más arriba) como
+  suficientes para el caso real — un usuario que corrió un batch de N
+  escenarios quiere comparar el mismo reach/HRU/variable entre todos ellos
+  sin abrir cada `scenario_<pct>pct/` como proyecto y exportar uno por uno.
+  Es de solo lectura (nunca escribe en ningún `TxtInOut`, solo lee lo que
+  Organize ya dejó en cada escenario) y opera sobre **cualquier** carpeta
+  de batch vía su propio "Browse" — desacoplado de si el batch se acaba de
+  correr en esta sesión o es uno anterior; si ya hay una carpeta destino
+  elegida en la pestaña, la ventana arranca con esa carpeta precargada
+  (`initial_batch_dir`), pero se puede apuntar a otra.
+
+  Tres modos, todos produciendo **un archivo por variable** con una
+  columna por escenario (el eje que se quiere comparar) — pedido explícito
+  del usuario, para no tener que pegar CSVs a mano:
+  - **RCH**: siempre todos los reach de la cuenca juntos (columnas `date,
+    reach, <escenario...>`) — un reach ya es su propia unidad espacial, sin
+    agregación.
+  - **HRU puntual**: una única subcuenca+HRU (columnas `date,
+    <escenario...>`).
+  - **HRU agrupado** (ej. "todas las HRU de bosque"): filtro por
+    cobertura/pendiente/suelo (cada campo opcional, AND entre campos, OR
+    dentro de un campo si se marca más de un valor) con alcance "cuenca
+    completa" (una sola serie agregada) o "subcuencas específicas"
+    (columnas `date, sub, <escenario...>`, una serie por subcuenca). La
+    clasificación de cada HRU se lee de un único escenario del batch (el
+    primero encontrado), no de todos — el batch solo modifica `HRU_FR`
+    (ver reglas arriba), nunca la identidad/cobertura/pendiente/suelo de
+    una HRU, así que es la misma en todos los escenarios de un mismo
+    batch.
+
+  La agregación del modo agrupado usa `sum` o `weighted_mean` (ponderado
+  por la columna `AREA` real de `output.hru`, no `HRU_FR`) según
+  **`config/hru_variable_aggregation.json`** — deliberadamente en JSON y
+  no hardcodeado en código (pedido explícito del usuario): casi todas las
+  variables de `output.hru` están expresadas por unidad de área (mm, kg/ha,
+  t/ha, o un índice como `DAILYCN`/`LAI`/días de estrés), así que promedio
+  ponderado es lo correcto ahí; una variable que ya sea un total/flujo
+  másico (no una tasa por área) necesitaría `sum` en cambio. La
+  clasificación inicial del asistente pobló casi todo en `weighted_mean`
+  (la única excepción es `AREA`, que se suma para dar el área total del
+  grupo) a partir de la semántica estándar SWAT2012, sin verificación
+  variable por variable contra el proyecto del usuario — el archivo está
+  para que se corrija ahí, sin tocar código, si alguna clasificación no
+  queda bien (`scenarios.comparison_export.load_hru_variable_aggregation`).
+
+  El botón "Export selected variables..." de HRU Results y los dos
+  checklists (RCH/HRU) de esta ventana comparten el mismo widget
+  (`ui/variable_checklist.py`, checkboxes con scroll + Select all/Clear).
+
+  Corre en hilo de fondo (`ui.tasks.run_in_background`) por si implica leer
+  varias bases `hru_timeseries.db` completas; al ser una ventana modal
+  (`grab_set()`) no hace falta bloquear navegación del resto de la app por
+  separado, ya queda bloqueada por el propio modal. Escribe los CSV
+  resultantes en `<carpeta de batch>/comparison_exports/`.
+
+  **Lección de esta feature, para cualquier uso futuro de
+  `CTkScrollableFrame` en la app:** un bug real (crash) apareció al abrir
+  la ventana con `initial_batch_dir` ya seteado — el código reconstruía
+  los checklists de cobertura/pendiente/suelo/subcuencas dentro de
+  `__init__`, y usaba `checklist.master` para encontrar dónde volver a
+  empaquetar el widget nuevo. `CTkScrollableFrame` redirige
+  `pack()`/`grid()`/`destroy()` a un `_parent_frame` interno y el propio
+  widget vive con `master=` apuntando a un canvas interno propio, no al
+  contenedor real donde se llamó `.pack(...)` — `checklist.master` daba
+  ese canvas (a veces ya en proceso de destruirse), no el contenedor
+  verdadero, y reventaba con `TclError`. Corregido guardando el contenedor
+  real aparte (`self._land_use_holder`, etc.) en vez de inferirlo del
+  widget — atrapado por un test end-to-end con un root de Tk real
+  (`tests/ui/test_scenario_comparison_export_e2e.py`), no por
+  `py_compile` ni por tests que solo verifican lógica pura sin construir
+  widgets.
 
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está

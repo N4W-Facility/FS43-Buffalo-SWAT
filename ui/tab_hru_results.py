@@ -37,6 +37,7 @@ from swat_io.cio_parser import CioParseError, parse_run_settings
 from swat_io.hru_output_parser import (
     HRU_OUTPUT_VARIABLE_COLUMNS,
     build_hru_output_database,
+    export_hru_variables_csv,
     export_single_series_csv,
     export_subbasin_variable_csv,
     hru_output_db_path,
@@ -47,6 +48,7 @@ from swat_io.hru_output_parser import (
 from viz.rch_chart import build_rch_timeseries_figure
 
 from .tasks import run_in_background
+from .variable_selection_window import VariableSelectionWindow
 from .widgets import palette, style_combobox
 
 _DEFAULT_VARIABLE = "WYLD"
@@ -182,6 +184,22 @@ class HruResultsTab(ctk.CTkFrame):
             state="disabled",
         )
         self._export_subbasin_button.grid(row=0, column=1, sticky="w")
+
+        self._export_all_variables_button = ctk.CTkButton(
+            export_row,
+            text=self._config.text("hru_results_tab.export_all_variables_button"),
+            command=self._on_export_all_variables_clicked,
+            state="disabled",
+        )
+        self._export_all_variables_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
+
+        self._export_selected_variables_button = ctk.CTkButton(
+            export_row,
+            text=self._config.text("hru_results_tab.export_selected_variables_button"),
+            command=self._on_export_selected_variables_clicked,
+            state="disabled",
+        )
+        self._export_selected_variables_button.grid(row=0, column=3, sticky="w", padx=(8, 0))
 
         return frame
 
@@ -334,6 +352,17 @@ class HruResultsTab(ctk.CTkFrame):
             return None
         return int(subbasin_value), int(hru_value), self._variable_label_to_code[variable_label]
 
+    def _current_hru(self) -> tuple[int, int] | None:
+        """Subcuenca + HRU elegidos, sin requerir una variable seleccionada --
+        a diferencia de _current_selection, la usan los dos exports que no
+        dependen de qué variable esté graficada (todas las variables /
+        selección por checkbox)."""
+        subbasin_value = self._subbasin_selector.get()
+        hru_value = self._hru_selector.get()
+        if not subbasin_value or not hru_value or self._db_path is None:
+            return None
+        return int(subbasin_value), int(hru_value)
+
     def _refresh_chart(self) -> None:
         selection = self._current_selection()
         self._refresh_export_buttons_enabled(True)
@@ -372,9 +401,13 @@ class HruResultsTab(ctk.CTkFrame):
 
     def _refresh_export_buttons_enabled(self, controls_enabled: bool) -> None:
         selection = self._current_selection() if controls_enabled else None
+        hru_selection = self._current_hru() if controls_enabled else None
         state = "normal" if selection is not None else "disabled"
+        hru_state = "normal" if hru_selection is not None else "disabled"
         self._export_series_button.configure(state=state)
         self._export_subbasin_button.configure(state=state)
+        self._export_all_variables_button.configure(state=hru_state)
+        self._export_selected_variables_button.configure(state=hru_state)
 
     # -- exports CSV ------------------------------------------------------
 
@@ -419,6 +452,58 @@ class HruResultsTab(ctk.CTkFrame):
             self._set_status(self._config.text("hru_results_tab.export_error").format(error=str(error)), error=True)
             return
         self._set_status(self._config.text("hru_results_tab.export_success").format(path=path))
+
+    def _on_export_all_variables_clicked(self) -> None:
+        hru_selection = self._current_hru()
+        if hru_selection is None:
+            return
+        _sub, hru = hru_selection
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            initialfile=f"hru_{hru}_all_variables.csv",
+        )
+        if not path:
+            return
+
+        try:
+            export_hru_variables_csv(self._db_path, hru, HRU_OUTPUT_VARIABLE_COLUMNS, Path(path))
+        except OSError as error:
+            self._set_status(self._config.text("hru_results_tab.export_error").format(error=str(error)), error=True)
+            return
+        self._set_status(self._config.text("hru_results_tab.export_success").format(path=path))
+
+    def _on_export_selected_variables_clicked(self) -> None:
+        hru_selection = self._current_hru()
+        if hru_selection is None:
+            return
+        _sub, hru = hru_selection
+
+        options = [(code, self._variable_code_to_label[code]) for code in HRU_OUTPUT_VARIABLE_COLUMNS]
+
+        def on_confirm(selected_codes: list[str]) -> None:
+            path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV", "*.csv")],
+                initialfile=f"hru_{hru}_selected_variables.csv",
+            )
+            if not path:
+                return
+            try:
+                export_hru_variables_csv(self._db_path, hru, selected_codes, Path(path))
+            except OSError as error:
+                self._set_status(self._config.text("hru_results_tab.export_error").format(error=str(error)), error=True)
+                return
+            self._set_status(self._config.text("hru_results_tab.export_success").format(path=path))
+
+        VariableSelectionWindow(
+            self,
+            self._config,
+            title_key="hru_results_tab.select_variables_window_title",
+            options=options,
+            on_confirm=on_confirm,
+        )
 
     # -- status ---------------------------------------------------------------
 

@@ -42,6 +42,7 @@ from scenarios.land_cover_config import (
 )
 
 from .dialog_confirm import ConfirmDialog
+from .scenario_comparison_window import ScenarioComparisonWindow
 from .tasks import run_in_background
 from .widgets import ReadOnlyField, palette
 
@@ -178,10 +179,22 @@ class BatchTab(ctk.CTkFrame):
         )
         self._open_folder_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
 
+        self._compare_button = ctk.CTkButton(
+            controls,
+            text=self._config.text("batch_tab.compare_button"),
+            fg_color="transparent",
+            border_width=1,
+            border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"),
+            hover_color=self._colors.get("window_bg"),
+            command=self._on_compare_clicked,
+        )
+        self._compare_button.grid(row=0, column=2, sticky="e", padx=(0, 8))
+
         self._run_button = ctk.CTkButton(
             controls, text=self._config.text("batch_tab.run_button"), command=self._on_run_clicked, state="disabled"
         )
-        self._run_button.grid(row=0, column=2, sticky="e")
+        self._run_button.grid(row=0, column=3, sticky="e")
 
         log_label = ctk.CTkLabel(
             frame,
@@ -234,6 +247,9 @@ class BatchTab(ctk.CTkFrame):
         if self._destination_dir is None:
             return
         os.startfile(self._destination_dir)  # solo Windows: target de distribución del proyecto
+
+    def _on_compare_clicked(self) -> None:
+        ScenarioComparisonWindow(self, self._config, initial_batch_dir=self._destination_dir)
 
     # -- configuración CSV ---------------------------------------------------
 
@@ -390,6 +406,7 @@ class BatchTab(ctk.CTkFrame):
         self._dest_browse_button.configure(state="normal" if enabled else "disabled")
         self._download_template_button.configure(state="normal" if enabled else "disabled")
         self._csv_load_button.configure(state="normal" if enabled else "disabled")
+        self._compare_button.configure(state="normal" if enabled else "disabled")
         self._open_folder_button.configure(
             state="normal" if enabled and self._destination_dir is not None else "disabled"
         )
