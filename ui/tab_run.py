@@ -4,6 +4,15 @@ ui.tasks.run_in_background) -- CLAUDE.md exige esto para cualquier
 operación que pueda tardar sobre un modelo real; una corrida de SWAT puede
 tomar del orden de minutos.
 
+El log de la corrida se llena en tiempo real: engine.run.run_scenario usa
+Popen y reporta progreso con el stdout+stderr acumulado cada vez que el
+proceso imprime una línea nueva, así que on_progress se conecta directo a
+_set_log (no al status_label -- un mensaje de progreso acá es el log
+completo hasta el momento, no una línea de estado corta). El polling de
+ui.tasks.run_in_background ya descarta mensajes intermedios si la UI no
+alcanza a dibujarlos todos, así que esto no puede congelar la ventana
+aunque el proceso imprima mucho.
+
 También aloja la única configuración de ruta que la app necesita hoy: el
 ejecutable SWAT (config.settings.AppPaths.swat_executable). Todavía no hay
 una pestaña Settings separada, así que "Browse..." vive acá mismo, junto al
@@ -422,7 +431,7 @@ class RunTab(ctk.CTkFrame):
         run_in_background(
             self,
             work,
-            on_progress=lambda message: self._status_label.configure(text=message),
+            on_progress=self._set_log,
             on_done=self._on_run_done,
             on_error=self._on_run_error,
         )

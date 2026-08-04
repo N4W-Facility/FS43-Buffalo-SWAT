@@ -8,9 +8,13 @@ violaría la regla de operaciones largas de CLAUDE.md; una subcuenca sola
 es lo bastante chica para hacerse de forma síncrona, igual que ya hace
 WetlandEditorWindow con discover_subbasins.
 
-Tabla de solo lectura: doble clic sobre el id de HRU (columna #0) abre
-HRUEditorWindow preseleccionada en esa HRU. Al cerrarse esa ventana, la
-tabla se refresca desde los .hru reales.
+Tabla de solo lectura salvo edición inline: doble clic sobre el id de HRU
+(columna #0) abre HRUEditorWindow preseleccionada en esa HRU (al cerrarse,
+la tabla se refresca desde los .hru reales); doble clic sobre cualquier
+otra celda (un parámetro) la edita inline igual que Wetlands -- overlay de
+Entry, sin rango declarado (solo valida que sea numérico, igual que Load
+CSV) -- y el resultado va al mismo staging en memoria que el import
+masivo, marcado con " *" hasta Materialize.
 
 "Export CSV" vuelca la tabla de la subcuenca visible (subbasin, hru, y
 cada parámetro real) a un CSV listo para editar y reimportar -- sin lista
@@ -32,8 +36,7 @@ de subcuencas), este SÍ corre en hilo de fondo (ui.tasks.run_in_background)
 y bloquea navegación mientras corre: un CSV de HRUs puede tocar muchas más
 filas que uno de Wetlands (una por HRU, no por subcuenca), y CLAUDE.md
 exige hilo de fondo para cualquier operación que pueda escalar a "miles de
-.hru". No hay edición inline de celdas todavía (a diferencia de Wetlands):
-no se pidió en esta ronda.
+.hru".
 
 Deshabilitada (vía TabBar.set_enabled) hasta que haya un proyecto abierto.
 """
@@ -41,7 +44,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import Entry, filedialog, ttk
 from typing import Callable
 
 import customtkinter as ctk
@@ -302,15 +305,18 @@ class HRUsTab(ctk.CTkFrame):
     def _on_row_double_click(self, event) -> None:
         if self._tree.identify_region(event.x, event.y) not in ("tree", "cell"):
             return
-        if self._tree.identify_column(event.x) != "#0":
-            return
         row_id = self._tree.identify_row(event.y)
         if not row_id:
             return
         selected_subbasin = self._subbasin_selector.get()
         if not selected_subbasin:
             return
-        self._open_editor(int(selected_subbasin), int(row_id))
+
+        column_id = self._tree.identify_column(event.x)
+        if column_id == "#0":
+            self._open_editor(int(selected_subbasin), int(row_id))
+            return
+        self._start_inline_edit(int(selected_subbasin), int(row_id), column_id)
 
     def _open_editor(self, subbasin_id: int, hru_id: int) -> None:
         if self._project_dir is None:
@@ -320,6 +326,53 @@ class HRUsTab(ctk.CTkFrame):
         )
         self.wait_window(editor)
         self._refresh_table()
+
+    # -- edición inline de celdas (mismo staging que Load CSV) ---------------
+
+    def _start_inline_edit(self, subbasin_id: int, hru_id: int, column_id: str) -> None:
+        columns = list(self._table.columns)
+        column_index = int(column_id[1:]) - 1
+        if column_index < 0 or column_index >= len(columns):
+            return
+        parameter_name = columns[column_index]
+
+        bbox = self._tree.bbox(str(hru_id), column_id)
+        if not bbox:
+            return
+        x, y, width, height = bbox
+
+        staged_value = self._staged.get((subbasin_id, hru_id), {}).get(parameter_name)
+        current = staged_value if staged_value is not None else self._table.loc[hru_id, parameter_name]
+
+        entry = Entry(self._tree)
+        entry.insert(0, _format_cell(current))
+        entry.select_range(0, "end")
+        entry.place(x=x, y=y, width=width, height=height)
+        entry.focus_set()
+
+        def commit(_event=None) -> None:
+            if not entry.winfo_exists():
+                return
+            raw = entry.get()
+            entry.destroy()
+            try:
+                value = float(raw)
+            except ValueError:
+                self._set_status(
+                    self._config.text("hru_tab.inline_edit_error").format(value=raw), error=True
+                )
+                return
+            self._staged.setdefault((subbasin_id, hru_id), {})[parameter_name] = value
+            self._set_status("")
+            self._refresh_table()
+
+        def cancel(_event=None) -> None:
+            if entry.winfo_exists():
+                entry.destroy()
+
+        entry.bind("<Return>", commit)
+        entry.bind("<Escape>", cancel)
+        entry.bind("<FocusOut>", commit)
 
     # -- export CSV de referencia (plantilla para el import) -----------------
 
