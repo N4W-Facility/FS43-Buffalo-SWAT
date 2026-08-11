@@ -697,6 +697,40 @@ vez de CSV — ver esa pestaña más abajo.
   pestaña también expone "Open NbS folder" (abre `tool_outputs/`, donde
   vive `nbs_library.json`) junto a Edit/Delete.
 
+  **Aplicar una NbS por área** (`scenarios/nbs_area_apply.py`, tarjeta
+  "Apply an NbS by area" de la misma pestaña, 2026-08-11): pedido explícito
+  del usuario — alternativa a elegir HRU una por una a mano (sección
+  "Aplicar una NbS" de arriba) cuando lo que se quiere es "convertir 100 ha
+  de esta subcuenca a esta NbS, 40% viniendo de bosque y 60% de pastos".
+  Alcance: una subcuenca a la vez, igual que la sección manual. El usuario
+  arma una tabla de `(cobertura fuente, % del área total)` que debe sumar
+  100% (`validate_source_allocations`), más prioridad opcional de pendiente
+  y suelo (mismo separador `">"` que `donor_priority`/`slope_priority` de
+  Batch, `parse_priority_text`). `plan_area_allocation` calcula, cobertura
+  por cobertura, cuántas HRU completas de esa cobertura hay que convertir
+  para cubrir su porción del área objetivo: nunca se parte una HRU en dos
+  coberturas para calzar el área exacta (mismo criterio ya aceptado en
+  `scenarios.land_cover_reallocation` — partir/crear una HRU equivaldría a
+  recalibrar), así que dentro de cada grupo de prioridad se toman HRU
+  completas de menor a mayor área hasta igualar o superar el objetivo
+  (heurística simple para minimizar el sobrante, no una solución óptima de
+  empaquetado). Si una cobertura fuente no tiene HRU disponibles en la
+  subcuenca se omite; si tiene menos área de la pedida, se aplica toda la
+  disponible y se reporta el déficit sin abortar el resto (mismo criterio
+  que Batch). El área de cada HRU sale de `HRU_FR * área real de la
+  subcuenca` (`swat_io.sub_parser.parse_sub_file`, `SUB_KM * 100`), nunca
+  de un valor inventado. El resultado (`AreaAllocationPlan.targets`, lista
+  de `(subbasin, hru)`) se pasa tal cual al mismo motor de escritura ya
+  existente (`scenarios.nbs_apply.apply_nbs`): este módulo nuevo solo
+  decide *cuáles* HRU entran, nunca escribe ningún archivo. "Preview"
+  muestra el desglose (ha pedidas/seleccionadas/HRU por cobertura, y
+  cualquier déficit) sin tocar disco; "Apply by area" recalcula el mismo
+  plan, pide confirmación (mismo texto de advertencia que el Apply manual:
+  escribe directo sobre `.hru`/`.mgt`/`plant.dat` reales) y corre en hilo
+  de fondo. Ambos botones de aplicar (manual y por área) se deshabilitan
+  mutuamente mientras cualquiera de los dos corre, para no arriesgar
+  escrituras concurrentes sobre el mismo `TxtInOut`.
+
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
 enforced por código todavía**. Las pestañas Wetlands y HRUs escriben sobre
