@@ -623,21 +623,41 @@ vez de CSV — ver esa pestaña más abajo.
   descriptivo estándar (`config/cpnm_names.py`, 127 entradas de la base
   vegetal estándar de referencia del proyecto — solo para mostrar, nunca
   fuente de verdad de qué coberturas existen realmente en el `plant.dat`
-  del proyecto). El wizard solo escribe la biblioteca JSON de NbS del
-  proyecto (`tool_outputs/nbs_library.json`, `scenarios/nbs.py`) — nunca
-  toca `TxtInOut`; el usuario puede crear varias NbS antes de aplicar
-  ninguna (pedido explícito del usuario).
+  del proyecto). El wizard siempre escribe la biblioteca JSON de NbS del
+  proyecto (`tool_outputs/nbs_library.json`, `scenarios/nbs.py`); el
+  usuario puede crear varias NbS antes de aplicar ninguna a ningún HRU
+  (pedido explícito del usuario). Si la cobertura es nueva, además
+  sincroniza de inmediato el registro correspondiente en el `plant.dat`
+  real del proyecto al terminar el wizard (crear o editar) — pedido
+  explícito del usuario, 2026-08-11: antes esto se resolvía recién al
+  aplicar la NbS a un HRU (ver "Aplicar una NbS" más abajo). Pide
+  confirmación aparte (distinta de la de Aplicar) porque, a diferencia
+  del resto del wizard, sí toca `TxtInOut` en ese momento
+  (`scenarios.nbs_apply.sync_new_coverage_to_plant_dat`): crea el
+  registro la primera vez, o lo actualiza in-place en ediciones
+  posteriores (identificado por `NbSNewCoverage.icnum`, no por CPNM, para
+  seguir encontrando el mismo registro aunque el usuario renombre el
+  CPNM al editar) — nunca duplica ni borra un registro por esta vía,
+  ni siquiera si la NbS misma se borra de la biblioteca después.
 
   **Aplicar una NbS** (`scenarios/nbs_apply.py`, sección aparte de la misma
   pestaña: selector de subcuenca + lista de HRU con selección múltiple para
   construir la lista de HRU objetivo) sí escribe de verdad, directo sobre
   el proyecto abierto — mismo patrón in-place ya aceptado para
-  Wetlands/HRUs (ver aviso de deuda técnica más abajo). El ICNUM de una
-  cobertura nueva se resuelve recién en este momento (`max(ICNUM)+1` sobre
-  el `plant.dat` real), no al crear la NbS, porque `plant.dat` pudo haber
-  cambiado entre medio; si la misma NbS ya creó su registro en una
-  aplicación anterior (misma sesión o no), se reutiliza el ICNUM existente
-  en vez de duplicarlo. El campo `PLANT_ID` interno de una operación
+  Wetlands/HRUs (ver aviso de deuda técnica más abajo). La NbS a aplicar
+  se relee de `nbs_library.json` justo antes de aplicar
+  (`ui.tab_nbs.NbSTab._on_apply_clicked`, `scenarios.nbs.load_library`),
+  no de `self._library` (la copia en memoria que solo se refresca al abrir
+  el proyecto o crear/editar/borrar una NbS desde la UI) — pedido
+  explícito del usuario, 2026-08-11: si el usuario edita
+  `nbs_library.json` a mano mientras el proyecto está abierto, Apply debe
+  usar el archivo tal como quedó, no una copia desactualizada. El ICNUM de
+  una cobertura nueva normalmente ya está resuelto desde que se guardó la
+  NbS (ver "sincroniza de inmediato" más arriba); `_resolve_plant_id`
+  sigue como red de seguridad para NbS creadas antes de ese cambio o con
+  la biblioteca editada a mano sin ICNUM (`max(ICNUM)+1` sobre el
+  `plant.dat` real, o reutilizando un registro existente con el mismo
+  CPNM en vez de duplicarlo). El campo `PLANT_ID` interno de una operación
   "plant" (`MGT_OP=1`, distinto del `PLANT_ID` de cabecera) se inyecta
   automáticamente con el ICNUM resuelto — por eso el wizard no lo pide: la
   NbS no puede conocerlo de antemano. Cada HRU objetivo se escribe

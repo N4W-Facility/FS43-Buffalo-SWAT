@@ -12,7 +12,7 @@ import customtkinter as ctk
 import pytest
 
 from config.settings import ConfigManager
-from scenarios.nbs import load_library
+from scenarios.nbs import load_library, save_library
 from ui.nbs_wizard_window import NbSWizardWindow
 from ui.tab_nbs import NbSTab
 
@@ -322,3 +322,51 @@ def test_nbs_tab_edit_and_delete_buttons_toggle_with_selection(hidden_root, conf
     tab._on_library_selection_changed()
     assert tab._edit_button.cget("state") == "normal"
     assert tab._delete_button.cget("state") == "normal"
+
+
+def test_apply_rereads_library_json_to_pick_up_manual_edits(hidden_root, config, project, monkeypatch) -> None:
+    """Pedido explícito del usuario, 2026-08-11: si se edita
+    nbs_library.json a mano mientras la app está abierta, Apply debe usar
+    el archivo tal como quedó en disco, no self._library (poblado solo al
+    abrir el proyecto o crear/editar/borrar una NbS desde la UI, ver
+    _refresh_library)."""
+    from scenarios.nbs import NbSDefinition, add_or_replace
+    from scenarios.nbs_apply import NbSApplyReport
+
+    import ui.tab_nbs as tab_nbs_module
+
+    add_or_replace(
+        project,
+        NbSDefinition(
+            name="Editable NbS", target_lulc="FRST", new_coverage=None,
+            hru_params={"CANMX": 1.0, "OV_N": 0.1}, mgt_initial={"IGRO": 0}, cn2_by_hsg={"C": 80.0}, operations=[],
+        ),
+    )
+
+    tab = NbSTab(hidden_root, config)
+    tab.set_project(project)
+    tab._nbs_selector.current(0)
+    tab._targets = [(1, 1)]
+
+    # Edición manual del JSON en disco, sin pasar por la UI -- self._library
+    # sigue con CANMX=1.0 en memoria.
+    manual = load_library(project)
+    manual[0].hru_params["CANMX"] = 9.9
+    save_library(project, manual)
+
+    monkeypatch.setattr(tab_nbs_module, "ConfirmDialog", lambda master, cfg, *, message, on_confirm: on_confirm())
+    captured: dict = {}
+
+    def fake_apply_nbs(project_dir, definition, targets):
+        captured["canmx"] = definition.hru_params["CANMX"]
+        return NbSApplyReport(nbs_name=definition.name, plant_id=None, cpnm=None, results=[])
+
+    monkeypatch.setattr(tab_nbs_module, "apply_nbs", fake_apply_nbs)
+    monkeypatch.setattr(
+        tab_nbs_module, "run_in_background",
+        lambda widget, work, *, on_progress, on_done, on_error, **_kw: on_done(work(lambda _m: None)),
+    )
+
+    tab._on_apply_clicked()
+
+    assert captured["canmx"] == 9.9

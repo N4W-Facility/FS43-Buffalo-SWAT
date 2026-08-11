@@ -377,7 +377,12 @@ class NbSTab(ctk.CTkFrame):
             )
             return
         name = self._nbs_selector.get()
-        definition = next((d for d in self._library if d.name == name), None)
+        # Releído de disco acá (no self._library, poblado solo por
+        # _refresh_library en set_project/crear/editar/borrar) -- pedido
+        # explícito del usuario, 2026-08-11: si edita nbs_library.json a
+        # mano mientras la app está abierta, Apply debe usar esa NbS tal
+        # como quedó en el archivo, no una copia en memoria desactualizada.
+        definition = next((d for d in load_library(self._project_dir) if d.name == name), None)
         if definition is None:
             self._apply_status_label.configure(
                 text=self._config.text("nbs_tab.no_nbs_selected_error"), text_color=self._colors.get("error")
