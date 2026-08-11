@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from scenarios.nbs import NbSDefinition, NbSNewCoverage, NbSOperation
-from scenarios.nbs_apply import NbSApplyError, apply_nbs, validate_nbs_definition
+from scenarios.nbs_apply import NbSApplyError, apply_nbs, sync_new_coverage_to_plant_dat, validate_nbs_definition
 from swat_io.plant.parser import parse_plant_dat_file
 
 _PLANT_DAT = (
@@ -122,23 +122,23 @@ def test_apply_existing_coverage_writes_hru_and_mgt(project: Path) -> None:
     assert "Luse:AGRL" in sol_text
 
 
+_RFOR_PHYSIOLOGY = {
+    "BIO_E": 15.0, "HVSTI": 0.76, "BLAI": 5.0, "FRGRW1": 0.05, "LAIMX1": 0.05,
+    "FRGRW2": 0.4, "LAIMX2": 0.95, "DLAI": 0.99, "CHTMX": 6.0, "RDMX": 3.5,
+    "T_OPT": 20.0, "T_BASE": 0.0, "CNYLD": 0.0015, "CPYLD": 0.0003,
+    "PLTNFR1": 0.006, "PLTNFR2": 0.002, "PLTNFR3": 0.0015,
+    "PLTPFR1": 0.0007, "PLTPFR2": 0.0004, "PLTPFR3": 0.0003,
+    "WSYF": 0.01, "USLE_C": 0.001, "GSI": 0.002, "VPDFR": 4.0, "FRGMAX": 0.75,
+    "WAVP": 8.0, "CO2HI": 660.0, "BIOEHI": 16.0, "RSDCO_PL": 0.05, "ALAI_MIN": 0.75,
+    "BIO_LEAF": 0.3, "MAT_YRS": 50, "BMX_TREES": 1000.0, "EXT_COEF": 0.65, "BMDIEOFF": 0.1,
+}
+
+
 def test_apply_new_coverage_creates_plant_dat_record(project: Path) -> None:
     definition = NbSDefinition(
         name="Restored forest (new species)",
         target_lulc="RFOR",
-        new_coverage=NbSNewCoverage(
-            cpnm="RFOR", idc=7,
-            physiology={
-                "BIO_E": 15.0, "HVSTI": 0.76, "BLAI": 5.0, "FRGRW1": 0.05, "LAIMX1": 0.05,
-                "FRGRW2": 0.4, "LAIMX2": 0.95, "DLAI": 0.99, "CHTMX": 6.0, "RDMX": 3.5,
-                "T_OPT": 20.0, "T_BASE": 0.0, "CNYLD": 0.0015, "CPYLD": 0.0003,
-                "PLTNFR1": 0.006, "PLTNFR2": 0.002, "PLTNFR3": 0.0015,
-                "PLTPFR1": 0.0007, "PLTPFR2": 0.0004, "PLTPFR3": 0.0003,
-                "WSYF": 0.01, "USLE_C": 0.001, "GSI": 0.002, "VPDFR": 4.0, "FRGMAX": 0.75,
-                "WAVP": 8.0, "CO2HI": 660.0, "BIOEHI": 16.0, "RSDCO_PL": 0.05, "ALAI_MIN": 0.75,
-                "BIO_LEAF": 0.3, "MAT_YRS": 50, "BMX_TREES": 1000.0, "EXT_COEF": 0.65, "BMDIEOFF": 0.1,
-            },
-        ),
+        new_coverage=NbSNewCoverage(cpnm="RFOR", idc=7, physiology=_RFOR_PHYSIOLOGY),
         hru_params={"CANMX": 3.0, "OV_N": 0.12, "RSDIN": 0.0},
         mgt_initial={"IGRO": 1, "LAI_INIT": 3.2, "BIO_INIT": 750.0, "PHU_PLT": 1146.0},
         cn2_by_hsg={"C": 88.33},
@@ -200,3 +200,69 @@ def test_validate_nbs_definition_flags_missing_target_coverage(project: Path) ->
     )
     errors = validate_nbs_definition(bad, pdat)
     assert any("NOPE" in e for e in errors)
+
+
+def _rfor_definition() -> NbSDefinition:
+    return NbSDefinition(
+        name="Restored forest (new species)",
+        target_lulc="RFOR",
+        new_coverage=NbSNewCoverage(cpnm="RFOR", idc=7, physiology=dict(_RFOR_PHYSIOLOGY)),
+        hru_params={"CANMX": 3.0, "OV_N": 0.12, "RSDIN": 0.0},
+        mgt_initial={"IGRO": 1, "LAI_INIT": 3.2, "BIO_INIT": 750.0, "PHU_PLT": 1146.0},
+        cn2_by_hsg={"C": 88.33},
+        operations=[NbSOperation(mgt_op=1, husc=0.15, fields={}), NbSOperation(mgt_op=17)],
+    )
+
+
+def test_sync_new_coverage_creates_record_on_first_save(project: Path) -> None:
+    definition = _rfor_definition()
+
+    synced = sync_new_coverage_to_plant_dat(project, definition)
+
+    assert synced.new_coverage.icnum == 7  # max(1, 6) + 1
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    record = pdat.get_record_by_cpnm("RFOR")
+    assert record is not None
+    assert record.icnum == 7
+    assert record.get("BIO_E") == 15.0
+
+
+def test_sync_new_coverage_updates_same_record_on_edit(project: Path) -> None:
+    definition = _rfor_definition()
+    sync_new_coverage_to_plant_dat(project, definition)
+
+    definition.new_coverage.physiology["BIO_E"] = 22.0  # el usuario edita la NbS
+    sync_new_coverage_to_plant_dat(project, definition)
+
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    assert len(pdat.records) == 3  # no se duplicó el registro
+    record = pdat.get_record_by_cpnm("RFOR")
+    assert record.get("BIO_E") == 22.0
+
+
+def test_sync_new_coverage_adopts_record_created_by_another_process(project: Path) -> None:
+    # Simula que el CPNM ya existe en plant.dat (p. ej. otra NbS lo creó)
+    # pero esta NbS todavía no conoce el ICNUM -- debe adoptar el registro
+    # existente en vez de duplicarlo (mismo criterio que antes tenía
+    # _resolve_plant_id para el flujo de aplicar).
+    first = _rfor_definition()
+    sync_new_coverage_to_plant_dat(project, first)
+
+    second = _rfor_definition()  # icnum=None: no sabe que "RFOR" ya existe
+    synced = sync_new_coverage_to_plant_dat(project, second)
+
+    assert synced.new_coverage.icnum == 7
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    assert len(pdat.records) == 3
+
+
+def test_sync_new_coverage_raises_on_cpnm_rename_conflict(project: Path) -> None:
+    definition = _rfor_definition()
+    sync_new_coverage_to_plant_dat(project, definition)  # icnum=7, CPNM=RFOR
+
+    definition.new_coverage.cpnm = "FRST"  # ya usado por el registro icnum=6
+    with pytest.raises(NbSApplyError):
+        sync_new_coverage_to_plant_dat(project, definition)
+
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    assert len(pdat.records) == 3  # no se escribió nada

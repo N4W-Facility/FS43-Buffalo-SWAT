@@ -174,6 +174,75 @@ def test_wizard_new_coverage_adds_physiology_step(hidden_root, config, project) 
     window.destroy()
 
 
+def test_wizard_new_coverage_syncs_plant_dat_on_finish(hidden_root, config, project, monkeypatch) -> None:
+    """Al terminar el wizard con una cobertura nueva, plant.dat ya debe
+    tener el registro configurado -- sin esperar a "Apply" (ver
+    scenarios.nbs_apply.sync_new_coverage_to_plant_dat). El "Yes" del
+    ConfirmDialog se simula parcheando la clase para que confirme de
+    inmediato -- mismo criterio que el resto del código de producción para
+    esta confirmación, sin lógica de negocio propia que testear acá (eso
+    lo cubre tests/scenarios/test_nbs_apply.py)."""
+    import ui.nbs_wizard_window as wizard_module
+
+    monkeypatch.setattr(wizard_module, "ConfirmDialog", lambda master, cfg, *, message, on_confirm: on_confirm())
+
+    window = NbSWizardWindow(hidden_root, config, project)
+    window.update()
+
+    window._name_entry.insert(0, "Restored forest NbS")
+    window._on_next_clicked()
+    window.update()
+
+    window._coverage_mode_var.set("new")
+    window._render_coverage_body()
+    window.update()
+    window._new_cpnm_entry.insert(0, "RFOR")
+    window._on_next_clicked()
+    window.update()
+
+    assert window._current_step_key() == "physiology"
+    frst_index = window._phys_copy_codes.index("FRST")
+    window._phys_copy_selector.current(frst_index)
+    window._on_physiology_copy_selected()
+    window._on_next_clicked()
+    window.update()
+
+    assert window._current_step_key() == "copy_from_existing"
+    window._on_next_clicked()
+    window.update()
+
+    assert window._current_step_key() == "hru_params"
+    window._hru_param_entries["CANMX"].insert(0, "3.0")
+    window._hru_param_entries["OV_N"].insert(0, "0.12")
+    window._on_next_clicked()
+    window.update()
+
+    assert window._current_step_key() == "mgt_initial"
+    window._igro_selector.current(0)
+    window._render_initial_fields()
+    window._cn2_entries["C"].insert(0, "88.33")
+    window._on_next_clicked()
+    window.update()
+
+    assert window._current_step_key() == "operations"
+    window._on_next_clicked()
+    window.update()
+
+    assert window._current_step_key() == "review"
+    window._on_next_clicked()
+
+    library = load_library(project)
+    assert len(library) == 1
+    icnum = library[0].new_coverage.icnum
+    assert icnum == 7  # max(1, 6) + 1 en el plant.dat sintético del fixture
+
+    from swat_io.plant.parser import parse_plant_dat_file
+
+    record = parse_plant_dat_file(project / "TxtInOut" / "plant.dat").get_record_by_cpnm("RFOR")
+    assert record is not None
+    assert record.icnum == icnum
+
+
 def test_wizard_rejects_duplicate_name(hidden_root, config, project) -> None:
     from scenarios.nbs import NbSDefinition, add_or_replace
 

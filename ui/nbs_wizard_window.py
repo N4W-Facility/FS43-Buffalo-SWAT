@@ -4,10 +4,15 @@ copiar de una configuración existente -> parámetros .hru -> condición
 inicial .mgt + CN2 por HSG -> calendario de manejo -> revisión y guardado.
 
 Ventana modal con pasos Next/Back (decisión explícita del usuario, dado el
-número de decisiones condicionales del flujo) -- ver CLAUDE.md. Nunca
-escribe sobre TxtInOut: solo agrega/reemplaza una entrada en la biblioteca
-JSON de NbS del proyecto (scenarios.nbs). Aplicar una NbS a HRU reales es
-un flujo aparte (ver ui/tab_nbs.py, scenarios.nbs_apply).
+número de decisiones condicionales del flujo) -- ver CLAUDE.md. Guardar
+siempre agrega/reemplaza una entrada en la biblioteca JSON de NbS del
+proyecto (scenarios.nbs); si la cobertura es nueva, además sincroniza de
+inmediato el registro correspondiente en el plant.dat real del proyecto
+(``scenarios.nbs_apply.sync_new_coverage_to_plant_dat`` -- pedido
+explícito del usuario, 2026-08-11: antes plant.dat solo se tocaba al
+aplicar la NbS a HRU reales, ver ui/tab_nbs.py/scenarios.nbs_apply). El
+resto de lo que la NbS define (.hru/.mgt/calendario) sigue sin tocar
+TxtInOut hasta que se aplique.
 """
 from __future__ import annotations
 
@@ -29,11 +34,12 @@ from scenarios.nbs import (
     load_library,
 )
 from scenarios.nbs_analysis import scan_existing_parameter_combinations
-from scenarios.nbs_apply import validate_nbs_definition
+from scenarios.nbs_apply import NbSApplyError, sync_new_coverage_to_plant_dat, validate_nbs_definition
 from swat_io.mgt.operation_specs import MGT_OPERATION_NAMES
 from swat_io.plant.models import LINE2_FIELDS, LINE3_FIELDS, LINE4_FIELDS, LINE5_FIELDS
 from swat_io.plant.parser import parse_plant_dat_file
 
+from .dialog_confirm import ConfirmDialog
 from .nbs_operation_dialog import NbSOperationDialog
 from .tasks import run_in_background
 from .widgets import build_scrollable_treeview, palette, style_combobox
@@ -83,6 +89,15 @@ class NbSWizardWindow(ctk.CTkToplevel):
         # del chequeo de "nombre ya usado" en _collect_step_name para poder
         # guardar sin cambiar el nombre (ver ese método más abajo).
         self._editing_original_name = existing.name if existing is not None else None
+        # ICNUM ya sincronizado en plant.dat para la cobertura nueva de esta
+        # NbS (None si nunca se creó, o si se está creando desde cero) --
+        # se reusa para (a) no autorrechazar el propio CPNM como "ya
+        # tomado" en _collect_step_coverage al reeditar sin cambiarlo, y
+        # (b) pasarlo a sync_new_coverage_to_plant_dat en _create_nbs para
+        # actualizar el mismo registro en vez de crear uno nuevo.
+        self._own_icnum = (
+            existing.new_coverage.icnum if existing is not None and existing.new_coverage is not None else None
+        )
 
         self.title(config.text("nbs_wizard.edit_title") if existing is not None else config.text("nbs_wizard.title"))
         self.configure(fg_color=self._colors.get("window_bg"))
@@ -351,7 +366,8 @@ class NbSWizardWindow(ctk.CTkToplevel):
             if len(cpnm) != 4:
                 self._set_status(self._config.text("nbs_wizard.cpnm_length_error"))
                 return False
-            if self._plant_dat.is_cpnm_taken(cpnm):
+            taken_by = self._plant_dat.get_record_by_cpnm(cpnm)
+            if taken_by is not None and taken_by.icnum != self._own_icnum:
                 self._set_status(self._config.text("nbs_wizard.cpnm_taken_error").format(cpnm=cpnm))
                 return False
             self._state["target_cpnm"] = cpnm
@@ -795,7 +811,8 @@ class NbSWizardWindow(ctk.CTkToplevel):
         new_coverage = None
         if self._state["coverage_mode"] == "new":
             new_coverage = NbSNewCoverage(
-                cpnm=self._state["target_cpnm"], idc=self._state["new_idc"], physiology=dict(self._state["physiology"])
+                cpnm=self._state["target_cpnm"], idc=self._state["new_idc"],
+                physiology=dict(self._state["physiology"]), icnum=self._own_icnum,
             )
 
         definition = NbSDefinition(
@@ -814,6 +831,22 @@ class NbSWizardWindow(ctk.CTkToplevel):
             self._set_status("; ".join(errors))
             return
 
+        if new_coverage is not None:
+            ConfirmDialog(
+                self, self._config,
+                message=self._config.text("nbs_wizard.plant_dat_confirm").format(cpnm=new_coverage.cpnm),
+                on_confirm=lambda: self._finish_save(definition),
+            )
+        else:
+            self._finish_save(definition)
+
+    def _finish_save(self, definition: NbSDefinition) -> None:
+        if definition.new_coverage is not None:
+            try:
+                sync_new_coverage_to_plant_dat(self._project_dir, definition)
+            except NbSApplyError as exc:
+                self._set_status(str(exc))
+                return
         add_or_replace(self._project_dir, definition)
         self._on_created()
         self.destroy()

@@ -61,22 +61,32 @@ class NbSOperation:
 
 @dataclass
 class NbSNewCoverage:
-    """Fisiología vegetal de una cobertura nueva (registro plant.dat). El
-    ICNUM no se guarda aquí: se resuelve como max(ICNUM)+1 en el momento de
-    aplicar (ver scenarios/nbs_apply.py), no al crear la NbS -- plant.dat
-    puede haber cambiado entre medio (otra NbS con cobertura nueva ya
-    aplicada, u otro proyecto)."""
+    """Fisiología vegetal de una cobertura nueva (registro plant.dat).
+
+    ``icnum`` es None hasta que el registro se escribe por primera vez en
+    plant.dat -- a diferencia del diseño original (ICNUM resuelto solo al
+    aplicar), desde 2026-08-11 el wizard sincroniza plant.dat de inmediato
+    al guardar la NbS (ver scenarios.nbs_apply.sync_new_coverage_to_plant_dat
+    y CLAUDE.md), así que el ICNUM ya asignado se guarda acá para poder
+    reencontrar el mismo registro en ediciones futuras aunque el usuario
+    cambie el CPNM. ``scenarios.nbs_apply.apply_nbs`` sigue tolerando
+    ``icnum is None`` (NbS creadas antes de este cambio, o biblioteca
+    editada a mano) resolviéndolo en ese momento como antes."""
 
     cpnm: str
     idc: int
     physiology: dict[str, float | int] = field(default_factory=dict)
+    icnum: int | None = None
 
     def to_dict(self) -> dict:
-        return {"cpnm": self.cpnm, "idc": self.idc, "physiology": dict(self.physiology)}
+        return {"cpnm": self.cpnm, "idc": self.idc, "physiology": dict(self.physiology), "icnum": self.icnum}
 
     @staticmethod
     def from_dict(data: dict) -> "NbSNewCoverage":
-        return NbSNewCoverage(cpnm=data["cpnm"], idc=data["idc"], physiology=dict(data.get("physiology", {})))
+        return NbSNewCoverage(
+            cpnm=data["cpnm"], idc=data["idc"], physiology=dict(data.get("physiology", {})),
+            icnum=data.get("icnum"),
+        )
 
 
 @dataclass

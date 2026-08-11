@@ -541,6 +541,7 @@
   "nbs_wizard.review_igro": "IGRO={igro}",
   "nbs_wizard.review_cn2": "CN2 by HSG: {cn2}",
   "nbs_wizard.review_ops": "Management operations: {count}",
+  "nbs_wizard.plant_dat_confirm": "This creates or updates the \"{cpnm}\" land cover record in this project's plant.dat right now -- not only when the NbS is later applied to HRUs. Continue?",
 
   "nbs_wizard.operation_dialog.title": "Add operation",
   "nbs_wizard.operation_dialog.add_button": "Add",

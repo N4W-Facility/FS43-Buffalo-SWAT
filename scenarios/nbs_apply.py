@@ -3,12 +3,14 @@
 Dada una NbS ya creada (scenarios.nbs.NbSDefinition) y una lista de HRU
 objetivo (subcuenca, hru), escribe:
 
-- ``plant.dat``: solo si la NbS crea una cobertura nueva, y solo la primera
-  vez (si ya existe un registro con ese CPNM -- p. ej. porque esta misma
-  NbS ya se aplicó antes en esta sesión -- se reutiliza su ICNUM en vez de
-  duplicar el registro). El ICNUM se resuelve en este momento
-  (``max(ICNUM)+1``), no al crear la NbS: plant.dat pudo haber cambiado
-  entre medio.
+- ``plant.dat``: en la práctica ya no ocurre acá -- desde 2026-08-11 el
+  wizard llama a ``sync_new_coverage_to_plant_dat`` al guardar la NbS
+  (creación o edición), así que una cobertura nueva ya está configurada en
+  plant.dat antes de que exista ningún HRU objetivo. ``_resolve_plant_id``
+  se queda como red de seguridad para NbS creadas antes de este cambio (o
+  con la biblioteca JSON editada a mano): si ``new_coverage.icnum`` es
+  None o el registro no aparece, resuelve el ICNUM ahí mismo
+  (``max(ICNUM)+1`` o reutilizando un registro con el mismo CPNM).
 - ``.hru`` y ``.mgt`` de cada HRU objetivo: parámetros de superficie, IGRO/
   PLANT_ID/condición inicial/CN2 (por el HYDGRP real de esa HRU, ver
   swat_io.sol_parser), el calendario de operaciones completo (se reemplaza
@@ -137,12 +139,80 @@ def validate_nbs_definition(nbs: NbSDefinition, plant_dat) -> list[str]:
     return errors
 
 
+def sync_new_coverage_to_plant_dat(project_dir: str | Path, nbs: NbSDefinition) -> NbSDefinition:
+    """Crea o actualiza en plant.dat el registro de ``nbs.new_coverage``,
+    de inmediato al guardar la NbS desde el wizard -- pedido explícito del
+    usuario, 2026-08-11: antes esto se resolvía recién al aplicar (ver
+    ``_resolve_plant_id``); ahora una cobertura nueva queda configurada en
+    plant.dat tan pronto la NbS se guarda, sin esperar a que se aplique a
+    ninguna HRU. No-op si ``nbs.new_coverage`` es None (cobertura
+    existente, nada que sincronizar).
+
+    Reencuentra el registro por ICNUM (``nbs.new_coverage.icnum``) cuando
+    ya se sincronizó antes -- así una edición que renombra el CPNM sigue
+    actualizando el mismo registro en vez de crear uno nuevo. Si el ICNUM
+    todavía es None (primera vez) pero el CPNM ya existe en plant.dat
+    (otra NbS, u otro proceso, ya lo creó), se adopta ese registro en vez
+    de duplicarlo -- mismo criterio que ya tenía ``_resolve_plant_id`` para
+    el flujo de aplicar. Devuelve ``nbs`` con ``new_coverage.icnum``
+    poblado; lanza ``NbSApplyError`` sin escribir nada si el CPNM pedido ya
+    pertenece a otro registro distinto del propio.
+    """
+    if nbs.new_coverage is None:
+        return nbs
+
+    txtinout_dir = Path(project_dir) / "TxtInOut"
+    plant_dat = parse_plant_dat_file(txtinout_dir / "plant.dat")
+    coverage = nbs.new_coverage
+
+    record = plant_dat.get_record(coverage.icnum) if coverage.icnum is not None else None
+
+    if record is None:
+        by_cpnm = plant_dat.get_record_by_cpnm(coverage.cpnm)
+        if by_cpnm is not None:
+            record = by_cpnm
+        else:
+            new_icnum = plant_dat.next_icnum()
+            record = build_plant_record(
+                icnum=new_icnum, cpnm=coverage.cpnm, idc=coverage.idc, values=coverage.physiology,
+            )
+            plant_dat.append_record(record)
+            atomic_write_bytes(txtinout_dir / "plant.dat", plant_dat.render().encode(plant_dat.encoding))
+            coverage.icnum = record.icnum
+            return nbs
+
+    conflicting = plant_dat.get_record_by_cpnm(coverage.cpnm)
+    if conflicting is not None and conflicting.icnum != record.icnum:
+        raise NbSApplyError(
+            f"No se pudo sincronizar plant.dat: el código '{coverage.cpnm}' ya pertenece a otro registro "
+            f"(ICNUM={conflicting.icnum})."
+        )
+
+    record.set("CPNM", coverage.cpnm.upper())
+    record.set("IDC", coverage.idc)
+    for name, value in coverage.physiology.items():
+        record.set(name, value)
+    atomic_write_bytes(txtinout_dir / "plant.dat", plant_dat.render().encode(plant_dat.encoding))
+    coverage.icnum = record.icnum
+    return nbs
+
+
 def _resolve_plant_id(project_txtinout: Path, nbs: NbSDefinition, plant_dat) -> tuple[int, str]:
     if nbs.new_coverage is None:
         record = plant_dat.get_record_by_cpnm(nbs.target_lulc)
         assert record is not None  # ya validado por validate_nbs_definition
         return record.icnum, record.cpnm
 
+    # Camino normal desde 2026-08-11: el wizard ya sincronizó plant.dat al
+    # guardar la NbS (ver sync_new_coverage_to_plant_dat), así que el ICNUM
+    # ya está resuelto -- solo confirmar que el registro sigue existiendo.
+    if nbs.new_coverage.icnum is not None:
+        record = plant_dat.get_record(nbs.new_coverage.icnum)
+        if record is not None:
+            return record.icnum, record.cpnm
+
+    # Recuperación / compatibilidad con NbS creadas antes de este cambio
+    # (icnum nunca sincronizado, o el registro desapareció de plant.dat).
     existing = plant_dat.get_record_by_cpnm(nbs.new_coverage.cpnm)
     if existing is not None:
         return existing.icnum, existing.cpnm
