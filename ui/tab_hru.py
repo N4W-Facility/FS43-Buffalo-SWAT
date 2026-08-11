@@ -51,7 +51,16 @@ import customtkinter as ctk
 import pandas as pd
 
 from config.settings import ConfigManager
-from scenarios.hru_draft import build_hru_table, export_hru_table_csv, load_subbasin_hru_files, write_hru_values
+from scenarios.hru_draft import (
+    HRU_FR_SUM_TOLERANCE,
+    HRU_FR_TARGET_SUM,
+    build_hru_table,
+    effective_hru_fr_sum,
+    export_hru_table_csv,
+    load_subbasin_hru_files,
+    subbasin_hru_fr_sum,
+    write_hru_values,
+)
 from scenarios.hru_import import parse_hru_import_csv
 from swat_io.discovery import discover_subbasins
 from swat_io.hru.exceptions import HRUModificationError
@@ -59,7 +68,7 @@ from swat_io.hru.exceptions import HRUModificationError
 from .dialog_confirm import ConfirmDialog
 from .hru_editor_window import HRUEditorWindow
 from .tasks import run_in_background
-from .widgets import palette, style_combobox
+from .widgets import bind_responsive_wraplength, palette, style_combobox
 
 _ROW_HEIGHT = 26
 _HRU_COLUMN_WIDTH = 70
@@ -126,26 +135,33 @@ class HRUsTab(ctk.CTkFrame):
         )
         title.grid(row=0, column=0, sticky="w")
 
+        subbasin_label = ctk.CTkLabel(
+            header,
+            text=self._config.text("hru_tab.subbasin_label"),
+            text_color=self._colors.get("text_secondary"),
+        )
+        subbasin_label.grid(row=0, column=1, sticky="e", padx=(0, 4))
+
         self._subbasin_selector = ttk.Combobox(
             header, style=style_combobox(self._config), state="readonly", values=[], width=8
         )
-        self._subbasin_selector.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self._subbasin_selector.grid(row=0, column=2, sticky="e", padx=(0, 8))
         self._subbasin_selector.bind("<<ComboboxSelected>>", self._on_subbasin_selected)
 
         self._edit_button = ctk.CTkButton(
             header, text=self._config.text("hru_tab.edit_button"), command=self._on_edit_clicked
         )
-        self._edit_button.grid(row=0, column=2, sticky="e", padx=(0, 8))
+        self._edit_button.grid(row=0, column=3, sticky="e", padx=(0, 8))
 
         self._export_button = ctk.CTkButton(
             header, text=self._config.text("hru_tab.export_csv"), command=self._on_export_clicked
         )
-        self._export_button.grid(row=0, column=3, sticky="e", padx=(0, 8))
+        self._export_button.grid(row=0, column=4, sticky="e", padx=(0, 8))
 
         self._import_button = ctk.CTkButton(
             header, text=self._config.text("hru_tab.import_csv"), command=self._on_import_clicked
         )
-        self._import_button.grid(row=0, column=4, sticky="e", padx=(0, 8))
+        self._import_button.grid(row=0, column=5, sticky="e", padx=(0, 8))
 
         self._materialize_button = ctk.CTkButton(
             header,
@@ -153,16 +169,30 @@ class HRUsTab(ctk.CTkFrame):
             command=self._on_materialize_clicked,
             state="disabled",
         )
-        self._materialize_button.grid(row=0, column=5, sticky="e")
+        self._materialize_button.grid(row=0, column=6, sticky="e")
 
-        self._status_label = ctk.CTkLabel(frame, text="", anchor="w", justify="left", wraplength=760)
-        self._status_label.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self._hru_fr_sum_label = ctk.CTkLabel(frame, text="", anchor="w")
+        self._hru_fr_sum_label.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+
+        self._status_label = ctk.CTkLabel(frame, text="", anchor="w", justify="left")
+        self._status_label.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        bind_responsive_wraplength(self._status_label)
+
+        instructions_label = ctk.CTkLabel(
+            frame,
+            text=self._config.text("hru_tab.instructions"),
+            text_color=self._colors.get("text_secondary"),
+            anchor="w",
+            justify="left",
+        )
+        instructions_label.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        bind_responsive_wraplength(instructions_label)
 
         self._style_ttk()
 
         table_container = ctk.CTkFrame(frame, fg_color="transparent")
-        table_container.grid(row=2, column=0, sticky="nsew")
-        frame.rowconfigure(2, weight=1)
+        table_container.grid(row=4, column=0, sticky="nsew")
+        frame.rowconfigure(4, weight=1)
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
 
@@ -260,12 +290,14 @@ class HRUsTab(ctk.CTkFrame):
             self._edit_button.configure(state="disabled")
             self._export_button.configure(state="disabled")
             self._materialize_button.configure(state="normal" if self._staged else "disabled")
+            self._hru_fr_sum_label.configure(text="")
             return
 
         subbasin_id = int(selected)
         self._hru_files = load_subbasin_hru_files(self._project_dir / "TxtInOut", subbasin_id)
         table = build_hru_table(self._hru_files)
         self._table = table
+        self._update_hru_fr_sum_label(subbasin_id, table)
 
         self._tree.heading("#0", text=self._config.text("hru_tab.hru_column"))
         self._tree.column("#0", width=_HRU_COLUMN_WIDTH, stretch=False, anchor="e")
@@ -293,6 +325,29 @@ class HRUsTab(ctk.CTkFrame):
             self._set_status(self._config.text("hru_tab.no_hrus"))
         else:
             self._set_status("")
+
+    def _update_hru_fr_sum_label(self, subbasin_id: int, table: pd.DataFrame) -> None:
+        """Aviso indicativo (nunca bloqueante, ver CLAUDE.md): HRU_FR sumado
+        entre las HRU visibles de esta subcuenca debería dar ~1.0. Usa el
+        staging en memoria cuando hay una celda editada, igual que la tabla
+        misma, para que el aviso refleje lo que se ve, no solo lo ya
+        guardado en disco."""
+        subbasin_staged = {
+            hru_id: values for (sub_id, hru_id), values in self._staged.items() if sub_id == subbasin_id
+        }
+        total = effective_hru_fr_sum(table, subbasin_staged)
+        if total is None:
+            self._hru_fr_sum_label.configure(text="")
+            return
+
+        on_target = abs(total - HRU_FR_TARGET_SUM) <= HRU_FR_SUM_TOLERANCE
+        color_key = "text_secondary" if on_target else "warning"
+        self._hru_fr_sum_label.configure(
+            text=self._config.text("hru_tab.hru_fr_sum_label").format(
+                sum=f"{total:.3f}", target=f"{HRU_FR_TARGET_SUM:g}"
+            ),
+            text_color=self._colors.get(color_key),
+        )
 
     def _on_edit_clicked(self) -> None:
         selected_subbasin = self._subbasin_selector.get()
@@ -467,7 +522,13 @@ class HRUsTab(ctk.CTkFrame):
                     continue
                 written_keys.append((subbasin_id, hru_id))
 
-            return {"written": written_keys, "errors": errors}
+            hru_fr_warnings: dict[int, float] = {}
+            for subbasin_id, hru_files in files_by_subbasin.items():
+                total = subbasin_hru_fr_sum(hru_files)
+                if total is not None and abs(total - HRU_FR_TARGET_SUM) > HRU_FR_SUM_TOLERANCE:
+                    hru_fr_warnings[subbasin_id] = total
+
+            return {"written": written_keys, "errors": errors, "hru_fr_warnings": hru_fr_warnings}
 
         run_in_background(
             self,
@@ -491,8 +552,16 @@ class HRUsTab(ctk.CTkFrame):
                 self._config.text("hru_tab.materialize_error").format(error="; ".join(result["errors"])),
                 error=True,
             )
-        else:
-            self._set_status(self._config.text("hru_tab.materialize_success"))
+            return
+
+        message = self._config.text("hru_tab.materialize_success")
+        warnings = result.get("hru_fr_warnings") or {}
+        if warnings:
+            details = "; ".join(f"{sub}: {total:.3f}" for sub, total in sorted(warnings.items()))
+            message += " " + self._config.text("hru_tab.materialize_hru_fr_warning").format(
+                target=f"{HRU_FR_TARGET_SUM:g}", details=details
+            )
+        self._set_status(message)
 
     def _on_materialize_error(self, error: Exception) -> None:
         self._finish_materialize()

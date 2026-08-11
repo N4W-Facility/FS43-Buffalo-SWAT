@@ -164,6 +164,26 @@ vez de CSV — ver esa pestaña más abajo.
   CSV". El resultado va al mismo staging en memoria `dict[(subbasin_id,
   hru_id), dict]` marcado con `*`, así que también espera a Materialize
   para escribirse de verdad.
+
+  **Aviso indicativo de suma de HRU_FR** (`scenarios.hru_draft.effective_hru_fr_sum`
+  / `subbasin_hru_fr_sum`, `HRU_FR_TARGET_SUM` = 1.0, `HRU_FR_SUM_TOLERANCE` =
+  0.01, 2026-08-04): pedido explícito del usuario — HRU_FR sumado entre las
+  HRU de una subcuenca debería dar ~1.0, pero la app nunca lo fuerza ni
+  bloquea el guardado por eso, solo informa. Una etiqueta fija sobre la
+  tabla (`_hru_fr_sum_label`) muestra la suma de la subcuenca visible,
+  recalculada en cada `_refresh_table` (edición inline, Load CSV,
+  Materialize, cambio de subcuenca) usando el staging en memoria cuando
+  hay una celda editada — en ámbar (`AppPalette.warning`, nuevo en
+  `resources/theme/swat_light.json`) si se aleja de 1.0 más que la
+  tolerancia, en gris neutral si no. Deliberadamente no se calcula en el
+  diálogo de confirmación de Load CSV/Materialize (podría implicar leer
+  los `.hru` de muchas subcuencas de forma síncrona antes de confirmar,
+  el mismo riesgo de freeze que ya evitó que Materialize corra en hilo de
+  fondo) sino después: Load CSV no lee contenido `.hru` (solo valida
+  existencia por nombre de archivo, sin cambios), y Materialize —ya en
+  hilo de fondo— calcula la suma real post-escritura de cada subcuenca
+  tocada y la reporta en el mensaje de resultado si queda fuera de
+  tolerancia.
 - **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`.
 - **Pestaña Run** (`ui/tab_run.py` + `engine/run.py`): quinta pestaña,
   habilitada al abrir proyecto igual que Wetlands/HRUs/Summary. Cubre el
@@ -534,15 +554,143 @@ vez de CSV — ver esa pestaña más abajo.
   `py_compile` ni por tests que solo verifican lógica pura sin construir
   widgets.
 
+- **Pestaña NbS** (`ui/tab_nbs.py` + `ui/nbs_wizard_window.py` +
+  `ui/nbs_operation_dialog.py` + `scenarios/nbs.py` + `scenarios/nbs_analysis.py`
+  + `scenarios/nbs_apply.py`, 2026-08-11): novena pestaña, asistente para
+  construir y aplicar masivamente "Soluciones basadas en la Naturaleza"
+  (NbS) — cambios de cobertura vegetal reutilizables (ej. "restauración de
+  bosque") sobre las HRU que el usuario elija. Pedido explícito del
+  usuario, con una decisión de diseño previa clave: la guía técnica que
+  trajo el usuario
+  (`SWAT2012_rev670_guia_general_cambio_creacion_coberturas.md`) deja
+  claro que una cobertura SWAT nunca es solo un `PLANT_ID` — es
+  fisiología vegetal (`plant.dat`, solo si la cobertura es nueva) +
+  superficie/dosel/residuos (`.hru`) + condición inicial y manejo
+  (`.mgt`, cabecera **y** calendario completo de operaciones). Por eso una
+  NbS agrupa los cuatro a la vez (`scenarios.nbs.NbSDefinition`), no un
+  set de parámetros sueltos.
+
+  **Módulos nuevos de `swat_io` que esto requirió** (no existían antes de
+  esta feature): `swat_io/mgt/` (parser/writer round-trip de `.mgt` —
+  cabecera con la misma gramática `valor | CODIGO : descripción` que
+  `.pnd`/`.hru` reutilizada vía `swat_io.text_format`, y una sección
+  "Operation Schedule" de **ancho fijo sin nombres de columna en el
+  archivo**, cuyas columnas exactas se sacaron de la documentación oficial
+  SWAT2012 I/O File Documentation cap. 20 y se verificaron programáticamente
+  byte a byte contra los ~6500 `.mgt` reales de Buffalo_calibrated_annual y
+  Crooked_daily — 0 discrepancias, cubriendo 11 de los 17 tipos de
+  operación reales del proyecto); `swat_io/plant/` (parser/writer de
+  `plant.dat`/`crop.dat`, registros de 5 líneas en formato libre —
+  **hallazgo verificado contra tres modelos reales del proyecto**: la
+  línea 5 de este `plant.dat` real de rev670 solo tiene 5 campos
+  `BIO_LEAF MAT_YRS BMX_TREES EXT_COEF BMDIEOFF`, no los 7 que trae la
+  documentación oficial más reciente de SWAT2012 IO — `RSR1C`/`RSR2C` no
+  existen en el archivo real y por eso no se exponen en el catálogo de
+  parámetros, para no inventar campos inexistentes); `swat_io/sol_parser.py`
+  (lectura de solo lectura de `Soil Hydrologic Group` en `.sol`, único uso
+  que esta feature necesita de `.sol` — el resto del archivo sigue sin
+  tocarse, coherente con que un cambio de cobertura nunca modifica el
+  suelo). También se extrajo `swat_io/common/field_formatting.py`
+  (formateo de campo preservando ancho/decimales del valor original) como
+  utilidad compartida nueva, sin tocar la copia histórica ya probada de
+  `swat_io/hru/models.py` — mismo criterio de `swat_io/common/` que ya
+  documenta este archivo.
+
+  **El wizard de creación** (`NbSWizardWindow`, ventana modal con pasos
+  Next/Back — decisión explícita del usuario dado el número de bifurcaciones
+  del flujo) recorre: nombre → cobertura objetivo (existente del `plant.dat`
+  real del proyecto, o nueva) → si es nueva, fisiología completa (copiando
+  de una cobertura existente como base, o desde cero — sin rellenar
+  ningún campo en silencio, coherente con la "regla de no invención" de la
+  guía) → **copiar de una configuración existente** (paso opcional:
+  `scenarios.nbs_analysis.scan_existing_parameter_combinations` escanea las
+  HRU reales que hoy tienen la cobertura elegida y agrupa sus parámetros
+  `.hru`/`.mgt`/calendario en combinaciones exactas — con tolerancia de
+  redondeo, y **CN2 desagregado por HYDROLOGIC_SOIL_GROUP** en vez de un
+  único valor, porque la guía es explícita en que CN2 depende del grupo
+  hidrológico de suelo y una misma NbS se aplicará sobre HRU con distinto
+  suelo; corre en hilo de fondo, `ui.tasks.run_in_background`, puede tardar
+  sobre un TxtInOut real) → parámetros `.hru` (`CANMX`/`OV_N`/`RSDIN`) →
+  condición inicial `.mgt` (`IGRO`/`LAI_INIT`/`BIO_INIT`/`PHU_PLT`) + CN2 por
+  HSG → calendario de manejo completo (`ui/nbs_operation_dialog.py`, un
+  diálogo por operación; los campos mostrados dependen del `MGT_OP`
+  elegido vía `swat_io.mgt.operation_specs.OPERATION_FIELD_SPECS` — el
+  campo `PLANT_ID` de una operación "plant" se omite del formulario a
+  propósito, ver más abajo) → revisión y guardado. Todo texto de parámetro
+  usa nombre legible (`config/nbs_parameter_labels.py`, sin rangos
+  curados — mismo criterio que `.hru` en general) en vez del acrónimo SWAT
+  crudo, y los códigos de cobertura (`CPNM`) se etiquetan con su nombre
+  descriptivo estándar (`config/cpnm_names.py`, 127 entradas de la base
+  vegetal estándar de referencia del proyecto — solo para mostrar, nunca
+  fuente de verdad de qué coberturas existen realmente en el `plant.dat`
+  del proyecto). El wizard solo escribe la biblioteca JSON de NbS del
+  proyecto (`tool_outputs/nbs_library.json`, `scenarios/nbs.py`) — nunca
+  toca `TxtInOut`; el usuario puede crear varias NbS antes de aplicar
+  ninguna (pedido explícito del usuario).
+
+  **Aplicar una NbS** (`scenarios/nbs_apply.py`, sección aparte de la misma
+  pestaña: selector de subcuenca + lista de HRU con selección múltiple para
+  construir la lista de HRU objetivo) sí escribe de verdad, directo sobre
+  el proyecto abierto — mismo patrón in-place ya aceptado para
+  Wetlands/HRUs (ver aviso de deuda técnica más abajo). El ICNUM de una
+  cobertura nueva se resuelve recién en este momento (`max(ICNUM)+1` sobre
+  el `plant.dat` real), no al crear la NbS, porque `plant.dat` pudo haber
+  cambiado entre medio; si la misma NbS ya creó su registro en una
+  aplicación anterior (misma sesión o no), se reutiliza el ICNUM existente
+  en vez de duplicarlo. El campo `PLANT_ID` interno de una operación
+  "plant" (`MGT_OP=1`, distinto del `PLANT_ID` de cabecera) se inyecta
+  automáticamente con el ICNUM resuelto — por eso el wizard no lo pide: la
+  NbS no puede conocerlo de antemano. Cada HRU objetivo se escribe
+  todo-o-nada (HYDGRP sin CN2 definido en la NbS, o `HRUFile.validate()`
+  con algún issue `ERROR`, cancela solo esa HRU) y un fallo puntual no
+  aborta el resto del lote — mismo criterio que Materialize de HRUs y el
+  batch de cobertura. El calendario de operaciones se **reemplaza entero**,
+  nunca se parchea (guía del proyecto, sección 12-13: manejo heredado de
+  la cobertura anterior — pastoreo, fertilización — mezclado con la nueva
+  cobertura produce una HRU inconsistente). Como puede tocar
+  `plant.dat` (compartido por toda la cuenca, no por HRU/subcuenca como el
+  resto de lo que la app toca hoy) y muchas HRU a la vez, corre en hilo de
+  fondo (`ui.tasks.run_in_background`) y pide confirmación antes de
+  correr (`App._on_nbs_tab_run_state_changed` bloquea navegación, mismo
+  mecanismo que las demás operaciones de fondo). También actualiza el
+  texto `Luse:<CPNM>` de la línea de título de `.hru` y `.mgt` (reportado
+  por el usuario, 2026-08-11: `swat_io.hru.parser`/`swat_io.mgt.parser`
+  leen ese texto como `metadata.land_use`, y `scenarios.nbs_analysis` lo
+  usa para decidir qué HRU "tienen" una cobertura al escanear
+  combinaciones existentes — sin este fix, una HRU recién convertida
+  seguía apareciendo bajo su cobertura vieja en cualquier escaneo
+  futuro). `.sol` deliberadamente se excluye de este fix aunque también
+  trae `Luse:` en su título: la guía del proyecto lo marca sin
+  excepciones como archivo que un cambio de cobertura nunca modifica
+  (sección 3.3), y ninguna función de escaneo de esta app lee ese texto
+  de `.sol` — solo `swat_io.sol_parser.read_hydrologic_group`, que no
+  depende de él.
+
+  **Edición de una NbS ya creada** (`NbSWizardWindow(..., existing=...)`,
+  botón "Edit..." o doble clic en la biblioteca, 2026-08-11): mismo
+  wizard de creación, pre-poblado desde la `NbSDefinition` existente —
+  cada paso ya leía sus valores iniciales de `self._state`, así que
+  precargar `self._state` en `__init__` alcanzó sin tocar los pasos
+  individuales. Guardar con el mismo nombre actualiza en el lugar
+  (`add_or_replace` ya hace upsert por nombre); el único ajuste fue
+  excluir el nombre original del chequeo de "nombre ya usado". La
+  pestaña también expone "Open NbS folder" (abre `tool_outputs/`, donde
+  vive `nbs_library.json`) junto a Edit/Delete.
+
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
 enforced por código todavía**. Las pestañas Wetlands y HRUs escriben sobre
 `<proyecto abierto>/TxtInOut/*.pnd` y `*.hru` respectivamente sin verificar
 si esa carpeta es una copia de escenario o el modelo de referencia
 calibrado; la pestaña Run corre `swat2012.exe` sobre ese mismo
-`TxtInOut` sin esa verificación tampoco, con el mismo aviso. Decisión
+`TxtInOut` sin esa verificación tampoco, con el mismo aviso. Aplicar una
+NbS (`scenarios/nbs_apply.py`) hereda el mismo aviso, con un radio de
+impacto mayor cuando crea una cobertura nueva: escribe sobre
+`plant.dat`, compartido por **toda la cuenca** (no por HRU/subcuenca como
+el resto de lo que la app toca hoy). Decisión
 explícita del usuario (2026-07-31, reafirmada al
-construir la pestaña HRUs): no bloquear esto en código por ahora — quedará
+construir la pestaña HRUs, y otra vez al construir NbS el 2026-08-11):
+no bloquear esto en código por ahora — quedará
 documentado en un futuro manual de usuario que abrir la carpeta calibrada
 directamente es bajo su propio riesgo. No "arreglar" esto de oficio sin
 que el usuario lo pida — es una elección consciente, no un olvido.
@@ -579,7 +727,9 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 | `output.hru` | Balance por unidad de respuesta hidrológica. Organizado en base SQLite (no CSV, ver pestaña HRU Results) y explorado por subcuenca/HRU/variable (gráfica + export CSV) desde la pestaña HRU Results — ver "Estado actual". |
 | `output.mgt` | Operaciones de manejo por HRU; se lee como texto plano junto con las demás salidas. |
 | `output.std` | Resumen general de la corrida. |
-| `.hru` (por HRU) | Parámetros físicos/agronómicos de cada HRU (`HRU_FR`, `SLSUBBSN`, `OV_N`, `CANMX`, `ESCO`, `EPCO`, etc.). Hoy se usa en modo lectura para inventario e informes de cobertura (ver "Módulo swat_io.hru" más abajo); la librería sí soporta escritura controlada para uso técnico/mantenimiento, pero la UI de escenarios todavía no edita `.hru`. |
+| `.hru` (por HRU) | Parámetros físicos/agronómicos de cada HRU (`HRU_FR`, `SLSUBBSN`, `OV_N`, `CANMX`, `ESCO`, `EPCO`, etc.). Editable hoy vía la pestaña HRUs (`swat_io.hru`) y, para `CANMX`/`OV_N`/`RSDIN`, vía Aplicar NbS (`swat_io.mgt`... ver pestaña NbS más arriba). |
+| `.mgt` (por HRU) | Cabecera de condición inicial/manejo general (`IGRO`, `PLANT_ID`, `CN2`, etc., misma gramática `valor \| CODIGO : descripción` que `.pnd`) más el calendario completo de operaciones de manejo (siembra, cosecha, pastoreo, fertilización...), texto de ancho fijo sin nombres de columna en el archivo. Antes solo se leía como parte de `output.mgt`; editable hoy vía Aplicar NbS (`swat_io.mgt`, ver pestaña NbS más arriba) — nunca por la UI de HRUs. |
+| `plant.dat` / `crop.dat` | Base vegetal: fisiología de cada `PLANT_ID` (registros de 5 líneas, ver `swat_io.plant`). El nombre real lo indica `PLANTDB` en `file.cio` — nunca se asume. Editable hoy solo cuando una NbS crea una cobertura nueva (Aplicar NbS agrega un registro nuevo con `ICNUM = max(ICNUM)+1`; nunca modifica un registro existente). Compartido por **toda la cuenca**, no por HRU/subcuenca. |
 
 La app debe tratar el parseo de estos archivos como una capa propia y
 aislada (lectura/escritura de `.pnd`, lectura de salidas), separada de la
@@ -698,6 +848,31 @@ Patrón obligatorio para cualquier operación larga que la nueva UI dispare:
    que la UI alcanza a procesarlos, y redibujar uno por uno hace que el
    respaldo crezca sin control hasta congelar la ventana igual (el mismo
    bug, dos capas más abajo).
+
+### CTkLabel.bind("<Configure>", ...) y bucles de resize (wraplength responsive)
+
+`ui/widgets.py` expone `bind_responsive_wraplength(label)`, usada por los
+textos de ayuda/estado de las tablas compiladas (`_status_label` e
+`instructions_label` en `ui/tab_wetlands.py` y `ui/tab_hru.py`) para que el
+`wraplength` siga el ancho real del contenedor en vez de un valor fijo en
+pixeles, y el texto se reajuste solo al redimensionar la ventana.
+
+**Nunca enganchar `<Configure>` directo sobre un `CTkLabel` para leer su
+propio ancho** — otro freeze total real (esta vez apenas se abre un
+proyecto, ni siquiera hace falta una operación larga) aparecido al hacerlo
+así. `CTkLabel.bind()` (customtkinter) no engancha el evento al frame
+compuesto, sino a sus dos widgets internos (`_canvas` y el `tkinter.Label`
+real que dibuja el texto) — y el tamaño de esos widgets internos cambia
+*como consecuencia* de `wraplength`. Enganchado ahí se arma un bucle de
+retroalimentación (`<Configure>` → cambia `wraplength` → cambia el tamaño
+interno → nuevo `<Configure>`) que nunca se estabiliza y consume la
+ventana. La corrección fue enganchar `label.master` (el contenedor real
+del grid, con `columnconfigure(weight=1)`) en vez del label mismo: su
+ancho cambia solo por el layout externo (redimensionar la ventana), nunca
+por el contenido del label, así que no hay ciclo. Cualquier `CTkLabel`
+futuro que necesite `wraplength` responsive debe usar
+`bind_responsive_wraplength`, nunca un `bind("<Configure>", ...)` manual
+sobre el label.
 
 ## Empaquetado y distribución
 

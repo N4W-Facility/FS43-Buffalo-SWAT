@@ -1,12 +1,15 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from scenarios.hru_draft import (
     build_hru_table,
+    effective_hru_fr_sum,
     export_hru_table_csv,
     list_subbasin_hru_files,
     load_subbasin_hru_files,
+    subbasin_hru_fr_sum,
     write_hru_values,
 )
 from scenarios.hru_import import parse_hru_import_csv
@@ -94,3 +97,57 @@ def test_export_hru_table_csv_round_trips_through_import(tmp_path: Path) -> None
         (1, 1): {"HRU_FR": 0.6, "CANMX": 1.0},
         (1, 2): {"HRU_FR": 0.4, "CANMX": 2.0},
     }
+
+
+def test_effective_hru_fr_sum_uses_disk_values_without_staging(tmp_path: Path) -> None:
+    txtinout_dir = tmp_path / "TxtInOut"
+    txtinout_dir.mkdir()
+    _write_hru(txtinout_dir / "000010001.hru", 1, 1, {"HRU_FR": 0.6, "CANMX": 1.0})
+    _write_hru(txtinout_dir / "000010002.hru", 1, 2, {"HRU_FR": 0.4, "CANMX": 2.0})
+
+    table = build_hru_table(load_subbasin_hru_files(txtinout_dir, 1))
+
+    assert effective_hru_fr_sum(table) == pytest.approx(1.0)
+
+
+def test_effective_hru_fr_sum_prefers_staged_value_over_disk(tmp_path: Path) -> None:
+    txtinout_dir = tmp_path / "TxtInOut"
+    txtinout_dir.mkdir()
+    _write_hru(txtinout_dir / "000010001.hru", 1, 1, {"HRU_FR": 0.6, "CANMX": 1.0})
+    _write_hru(txtinout_dir / "000010002.hru", 1, 2, {"HRU_FR": 0.4, "CANMX": 2.0})
+
+    table = build_hru_table(load_subbasin_hru_files(txtinout_dir, 1))
+    staged = {1: {"HRU_FR": 0.9}}
+
+    assert effective_hru_fr_sum(table, staged) == pytest.approx(1.3)
+
+
+def test_effective_hru_fr_sum_none_without_hru_fr_column(tmp_path: Path) -> None:
+    txtinout_dir = tmp_path / "TxtInOut"
+    txtinout_dir.mkdir()
+    _write_hru(txtinout_dir / "000010001.hru", 1, 1, {"CANMX": 1.0})
+
+    table = build_hru_table(load_subbasin_hru_files(txtinout_dir, 1))
+
+    assert effective_hru_fr_sum(table) is None
+
+
+def test_subbasin_hru_fr_sum_reads_from_disk(tmp_path: Path) -> None:
+    txtinout_dir = tmp_path / "TxtInOut"
+    txtinout_dir.mkdir()
+    _write_hru(txtinout_dir / "000010001.hru", 1, 1, {"HRU_FR": 0.6, "CANMX": 1.0})
+    _write_hru(txtinout_dir / "000010002.hru", 1, 2, {"HRU_FR": 0.5, "CANMX": 2.0})
+
+    hru_files = load_subbasin_hru_files(txtinout_dir, 1)
+
+    assert subbasin_hru_fr_sum(hru_files) == pytest.approx(1.1)
+
+
+def test_subbasin_hru_fr_sum_none_without_hru_fr(tmp_path: Path) -> None:
+    txtinout_dir = tmp_path / "TxtInOut"
+    txtinout_dir.mkdir()
+    _write_hru(txtinout_dir / "000010001.hru", 1, 1, {"CANMX": 1.0})
+
+    hru_files = load_subbasin_hru_files(txtinout_dir, 1)
+
+    assert subbasin_hru_fr_sum(hru_files) is None

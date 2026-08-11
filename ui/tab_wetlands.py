@@ -35,7 +35,7 @@ from swat_io.pnd_parser import _FIELD_TO_CODE, write_wetland_params
 
 from .dialog_confirm import ConfirmDialog
 from .wetland_editor_window import WetlandEditorWindow
-from .widgets import palette, style_combobox
+from .widgets import bind_responsive_wraplength, palette, style_combobox
 
 _ROW_HEIGHT = 26
 _ACRONYM_COLUMN_WIDTH = 130
@@ -85,34 +85,52 @@ class WetlandsTab(ctk.CTkFrame):
         )
         title.grid(row=0, column=0, sticky="w")
 
+        subbasin_label = ctk.CTkLabel(
+            header,
+            text=self._config.text("wetlands_tab.subbasin_label"),
+            text_color=self._colors.get("text_secondary"),
+        )
+        subbasin_label.grid(row=0, column=1, sticky="e", padx=(0, 4))
+
         self._subbasin_selector = ttk.Combobox(
             header, style=style_combobox(self._config), state="readonly", values=[], width=8
         )
-        self._subbasin_selector.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self._subbasin_selector.grid(row=0, column=2, sticky="e", padx=(0, 8))
 
         self._edit_button = ctk.CTkButton(
             header, text=self._config.text("wetlands_tab.edit_button"), command=self._on_edit_clicked
         )
-        self._edit_button.grid(row=0, column=2, sticky="e", padx=(0, 8))
+        self._edit_button.grid(row=0, column=3, sticky="e", padx=(0, 8))
 
         self._import_button = ctk.CTkButton(
             header, text=self._config.text("wetland.import_csv"), command=self._on_import_clicked
         )
-        self._import_button.grid(row=0, column=3, sticky="e", padx=(0, 8))
+        self._import_button.grid(row=0, column=4, sticky="e", padx=(0, 8))
 
         self._materialize_button = ctk.CTkButton(
             header, text=self._config.text("wetland.materialize"), command=self._on_materialize_clicked, state="disabled"
         )
-        self._materialize_button.grid(row=0, column=4, sticky="e")
+        self._materialize_button.grid(row=0, column=5, sticky="e")
 
-        self._status_label = ctk.CTkLabel(frame, text="", anchor="w", justify="left", wraplength=760)
-        self._status_label.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self._status_label = ctk.CTkLabel(frame, text="", anchor="w", justify="left")
+        self._status_label.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        bind_responsive_wraplength(self._status_label)
+
+        instructions_label = ctk.CTkLabel(
+            frame,
+            text=self._config.text("wetlands_tab.instructions"),
+            text_color=self._colors.get("text_secondary"),
+            anchor="w",
+            justify="left",
+        )
+        instructions_label.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        bind_responsive_wraplength(instructions_label)
 
         self._style_ttk()
 
         table_container = ctk.CTkFrame(frame, fg_color="transparent")
-        table_container.grid(row=2, column=0, sticky="nsew")
-        frame.rowconfigure(2, weight=1)
+        table_container.grid(row=3, column=0, sticky="nsew")
+        frame.rowconfigure(3, weight=1)
         table_container.rowconfigure(0, weight=1)
         table_container.columnconfigure(0, weight=1)
 

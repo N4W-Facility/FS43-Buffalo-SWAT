@@ -21,6 +21,7 @@ antemano.
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -30,6 +31,9 @@ from swat_io.hru.models import HRUFile, ParamValue
 from swat_io.hru.parser import parse_hru_file
 
 _HRU_GLOB_TEMPLATE = "{subbasin_id:05d}????.hru"
+
+HRU_FR_TARGET_SUM = 1.0
+HRU_FR_SUM_TOLERANCE = 0.01
 
 
 def list_subbasin_hru_files(txtinout_dir: Path, subbasin_id: int) -> list[Path]:
@@ -99,6 +103,41 @@ def write_hru_values(hru_file: HRUFile, values: dict[str, ParamValue]) -> None:
         hru_file.set_value(name, value)
     data = hru_file.render().encode(hru_file.encoding)
     atomic_write_bytes(hru_file.source_path, data)
+
+
+def effective_hru_fr_sum(table: pd.DataFrame, staged: dict[int, dict[str, ParamValue]] | None = None) -> float | None:
+    """Suma de HRU_FR entre las filas de ``table`` (una subcuenca), usando
+    el valor en ``staged`` (por hru_id) en vez del leído del .hru cuando
+    esa celda está en staging -- para el aviso indicativo (no bloqueante)
+    de la pestaña HRUs: HRU_FR debería sumar ~1.0 por subcuenca, pero
+    ninguna HRU nueva se crea ni se fuerza ese total, solo se informa.
+    None si la subcuenca no tiene columna HRU_FR."""
+    if "HRU_FR" not in table.columns:
+        return None
+    staged = staged or {}
+    total = 0.0
+    found = False
+    for hru_id in table.index:
+        value = staged.get(hru_id, {}).get("HRU_FR")
+        if value is None:
+            value = table.loc[hru_id, "HRU_FR"]
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            continue
+        total += float(value)
+        found = True
+    return total if found else None
+
+
+def subbasin_hru_fr_sum(hru_files: dict[int, HRUFile]) -> float | None:
+    """Suma de HRU_FR ya escrito en los .hru reales de una subcuenca --
+    usada tras Materialize (los valores en disco, no el staging) para el
+    mismo aviso indicativo. None si ninguna HRU de la subcuenca tiene
+    HRU_FR."""
+    values = [hru_file.get_value("HRU_FR") for hru_file in hru_files.values()]
+    values = [float(v) for v in values if v is not None]
+    if not values:
+        return None
+    return sum(values)
 
 
 def export_hru_table_csv(subbasin_id: int, table: pd.DataFrame, destination: Path) -> Path:

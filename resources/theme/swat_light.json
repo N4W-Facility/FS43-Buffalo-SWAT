@@ -9,6 +9,7 @@
     "accent_hover": "#1B6FC2",
     "success": "#2F9E44",
     "error": "#D64545",
+    "warning": "#B45309",
     "disabled": "#C7CBD1"
   },
 

@@ -13,6 +13,7 @@ from scenarios.project import ProjectMetadata
 from .tab_batch import BatchTab
 from .tab_hru import HRUsTab
 from .tab_hru_results import HruResultsTab
+from .tab_nbs import NbSTab
 from .tab_project import ProjectTab
 from .tab_results import ResultsTab
 from .tab_run import RunTab
@@ -53,6 +54,7 @@ class App(ctk.CTk):
             self._tab_bar, config, on_run_state_changed=self._on_hru_results_tab_run_state_changed
         )
         self._batch_tab = BatchTab(self._tab_bar, config, on_run_state_changed=self._on_batch_tab_run_state_changed)
+        self._nbs_tab = NbSTab(self._tab_bar, config, on_run_state_changed=self._on_nbs_tab_run_state_changed)
 
         self._tab_bar.add_tab("project", "tab.project", self._project_tab, enabled=True)
         self._tab_bar.add_tab("summary", "tab.summary", self._summary_tab, enabled=False)
@@ -62,6 +64,7 @@ class App(ctk.CTk):
         self._tab_bar.add_tab("results", "tab.results", self._results_tab, enabled=False)
         self._tab_bar.add_tab("hru_results", "tab.hru_results", self._hru_results_tab, enabled=False)
         self._tab_bar.add_tab("batch", "tab.batch", self._batch_tab, enabled=False)
+        self._tab_bar.add_tab("nbs", "tab.nbs", self._nbs_tab, enabled=False)
 
     def _on_project_opened(self, project_dir: Path, metadata: ProjectMetadata) -> None:
         self._tab_bar.set_enabled("summary", True)
@@ -78,6 +81,8 @@ class App(ctk.CTk):
         self._hru_results_tab.set_project(project_dir)
         self._tab_bar.set_enabled("batch", True)
         self._batch_tab.set_project(project_dir)
+        self._tab_bar.set_enabled("nbs", True)
+        self._nbs_tab.set_project(project_dir)
 
     def _on_summary_run_state_changed(self, running: bool) -> None:
         """Mientras Summary corre un Run, bloquea toda navegación (pestañas y
@@ -116,6 +121,15 @@ class App(ctk.CTk):
         post-procesamiento, varias veces): cambiar de proyecto a mitad de
         un batch dejaría hilos de fondo operando sobre una referencia que
         la UI ya no considera activa."""
+        self._tab_bar.set_navigation_locked(running)
+        self._project_tab.set_locked(running)
+
+    def _on_nbs_tab_run_state_changed(self, running: bool) -> None:
+        """Mismo bloqueo que las demás operaciones de fondo, mientras
+        NbSTab aplica una NbS a HRU reales (escribe plant.dat/.hru/.mgt en
+        hilo de fondo, ver scenarios.nbs_apply): cambiar de proyecto a
+        mitad de esa escritura dejaría el hilo de fondo operando sobre un
+        project_dir que la UI ya no considera activo."""
         self._tab_bar.set_navigation_locked(running)
         self._project_tab.set_locked(running)
 
