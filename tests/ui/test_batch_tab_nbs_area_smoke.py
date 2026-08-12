@@ -202,3 +202,44 @@ def test_full_series_run_writes_independent_scenarios(
     assert original.metadata.land_use == "AGRL"
 
     assert tab._nbs_batch_status_label.cget("text") != ""
+
+
+def test_land_cover_batch_passes_unchecked_output_options_through(
+    hidden_root, config, project, swat_executable, monkeypatch
+) -> None:
+    """Pedido explícito del usuario, 2026-08-12: el batch de cambio de
+    cobertura (sección de arriba) pasó a tener los mismos checkboxes
+    output.rch/.sub/.hru que ya tenía "NbS area batch" -- antes organizaba
+    todo sin preguntar. No vuelve a probar la lógica de organización en sí
+    (ya cubierta por tests/engine/test_batch_run.py): solo que destildar un
+    checkbox en la UI construye el OutputOrganizeOptions correcto y llega a
+    run_land_cover_batch."""
+    import ui.tab_batch as tab_batch_module
+    from scenarios.land_cover_config import LandCoverBatchConfig
+
+    _install_synchronous_mocks(monkeypatch)
+    config.paths = AppPaths(swat_executable=swat_executable)
+
+    captured: dict = {}
+
+    def fake_run_land_cover_batch(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(tab_batch_module, "run_land_cover_batch", fake_run_land_cover_batch)
+
+    tab = BatchTab(hidden_root, config)
+    tab.set_project(project)
+    tab._destination_dir = project.parent / "land_cover_out"
+    tab._batch_config = LandCoverBatchConfig(
+        target_lulc="FRST", target_pct_series=[10.0], donor_priority=["AGRL"],
+        slope_priority=None, soil_priority=None,
+    )
+    tab._output_sub_check.deselect()
+
+    tab._start_batch()
+
+    options = captured["output_options"]
+    assert options.rch is True
+    assert options.sub is False
+    assert options.hru is True

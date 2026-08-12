@@ -12,9 +12,10 @@ scenarios.land_cover_reallocation). El usuario elige una carpeta destino
 (fuera del proyecto) y un CSV de configuración
 (scenarios.land_cover_config.parse_land_cover_batch_csv); cada paso
 resultante queda en <destino>/scenario_<pct>pct/, con TxtInOut/ directo y
-sus salidas ya organizadas (resumen de coberturas/humedales,
-output.rch/output.hru) -- listo para abrirse como proyecto en la app, sin
-pasos manuales adicionales.
+sus salidas ya organizadas (resumen de coberturas/humedales siempre, más
+output.rch/.sub/.hru según los checkboxes que el usuario elija -- ver
+_output_rch_check/_output_sub_check/_output_hru_check) -- listo para
+abrirse como proyecto en la app, sin pasos manuales adicionales.
 
 Como esto copia carpetas y corre swat2012.exe varias veces, "Run batch"
 pide confirmación (a diferencia de Organize en Results/HRU Results, que no
@@ -23,6 +24,11 @@ referencia tampoco se toca, sí se ejecuta el motor de cómputo real sobre
 cada copia).
 
 Deshabilitada (vía TabBar.set_enabled) hasta que haya un proyecto abierto.
+
+Segunda sección de la pestaña ("NbS area batch", ver
+_build_nbs_area_batch_card): mismo patrón de serie de %, pero aplicando
+una NbS completa en vez de reasignar HRU_FR -- ver
+scenarios/nbs_area_batch.py y engine/nbs_area_batch_run.py.
 """
 from __future__ import annotations
 
@@ -174,8 +180,24 @@ class BatchTab(ctk.CTkFrame):
         separator_2 = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
         separator_2.grid(row=5, column=0, sticky="ew", pady=(0, 16))
 
+        output_row = ctk.CTkFrame(frame, fg_color="transparent")
+        output_row.grid(row=6, column=0, sticky="ew", pady=(0, 12))
+        ctk.CTkLabel(
+            output_row, text=self._config.text("batch_tab.output_organize_label"),
+            text_color=self._colors.get("text_secondary"),
+        ).pack(side="left")
+        self._output_rch_check = ctk.CTkCheckBox(output_row, text=self._config.text("batch_tab.output_organize_rch"))
+        self._output_rch_check.select()
+        self._output_rch_check.pack(side="left", padx=(16, 0))
+        self._output_sub_check = ctk.CTkCheckBox(output_row, text=self._config.text("batch_tab.output_organize_sub"))
+        self._output_sub_check.select()
+        self._output_sub_check.pack(side="left", padx=(12, 0))
+        self._output_hru_check = ctk.CTkCheckBox(output_row, text=self._config.text("batch_tab.output_organize_hru"))
+        self._output_hru_check.select()
+        self._output_hru_check.pack(side="left", padx=(12, 0))
+
         controls = ctk.CTkFrame(frame, fg_color="transparent")
-        controls.grid(row=6, column=0, sticky="ew")
+        controls.grid(row=7, column=0, sticky="ew")
         controls.columnconfigure(0, weight=1)
 
         self._status_label = ctk.CTkLabel(
@@ -219,10 +241,10 @@ class BatchTab(ctk.CTkFrame):
             text_color=self._colors.get("text_secondary"),
             anchor="w",
         )
-        log_label.grid(row=7, column=0, sticky="w", pady=(16, 4))
+        log_label.grid(row=8, column=0, sticky="w", pady=(16, 4))
 
         log_frame = ctk.CTkFrame(frame, fg_color=self._colors.get("surface"))
-        log_frame.grid(row=8, column=0, sticky="ew")
+        log_frame.grid(row=9, column=0, sticky="ew")
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
@@ -233,9 +255,9 @@ class BatchTab(ctk.CTkFrame):
         self._log_text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         separator_3 = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
-        separator_3.grid(row=9, column=0, sticky="ew", pady=16)
+        separator_3.grid(row=10, column=0, sticky="ew", pady=16)
 
-        self._build_nbs_area_batch_card(frame, row=10)
+        self._build_nbs_area_batch_card(frame, row=11)
 
         return frame
 
@@ -342,21 +364,21 @@ class BatchTab(ctk.CTkFrame):
         output_row = ctk.CTkFrame(card, fg_color="transparent")
         output_row.grid(row=8, column=0, sticky="ew", padx=16, pady=(12, 4))
         ctk.CTkLabel(
-            output_row, text=self._config.text("batch_tab.nbs_area_output_label"),
+            output_row, text=self._config.text("batch_tab.output_organize_label"),
             text_color=self._colors.get("text_secondary"),
         ).pack(side="left")
         self._nbs_batch_output_rch_check = ctk.CTkCheckBox(
-            output_row, text=self._config.text("batch_tab.nbs_area_output_rch")
+            output_row, text=self._config.text("batch_tab.output_organize_rch")
         )
         self._nbs_batch_output_rch_check.select()
         self._nbs_batch_output_rch_check.pack(side="left", padx=(16, 0))
         self._nbs_batch_output_sub_check = ctk.CTkCheckBox(
-            output_row, text=self._config.text("batch_tab.nbs_area_output_sub")
+            output_row, text=self._config.text("batch_tab.output_organize_sub")
         )
         self._nbs_batch_output_sub_check.select()
         self._nbs_batch_output_sub_check.pack(side="left", padx=(12, 0))
         self._nbs_batch_output_hru_check = ctk.CTkCheckBox(
-            output_row, text=self._config.text("batch_tab.nbs_area_output_hru")
+            output_row, text=self._config.text("batch_tab.output_organize_hru")
         )
         self._nbs_batch_output_hru_check.select()
         self._nbs_batch_output_hru_check.pack(side="left", padx=(12, 0))
@@ -548,6 +570,11 @@ class BatchTab(ctk.CTkFrame):
         batch_config = self._batch_config
         exe = self._config.paths.swat_executable
         target_name = self._config.paths.target_executable_name
+        output_options = OutputOrganizeOptions(
+            rch=bool(self._output_rch_check.get()),
+            sub=bool(self._output_sub_check.get()),
+            hru=bool(self._output_hru_check.get()),
+        )
 
         self._set_controls_enabled(False)
         self._set_status(self._config.text("batch_tab.running"))
@@ -556,7 +583,8 @@ class BatchTab(ctk.CTkFrame):
 
         def work(report_progress: Callable[[str], None]) -> list[ScenarioRunResult]:
             return run_land_cover_batch(
-                project_dir, destination_dir, batch_config, exe, target_name, on_progress=report_progress
+                project_dir, destination_dir, batch_config, exe, target_name, on_progress=report_progress,
+                output_options=output_options,
             )
 
         run_in_background(

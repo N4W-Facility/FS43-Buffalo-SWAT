@@ -18,10 +18,14 @@ módulo:
 3. Ejecuta swat2012.exe sobre la copia (engine.run.run_scenario).
 4. Corre automáticamente el mismo post-procesamiento que hoy dispara el
    usuario a mano desde Summary/Results/HRU Results:
-   generar_resumen_coberturas + generar_resumen_humedales,
-   organizar output.rch (swat_io.rch_parser) y output.hru
-   (swat_io.hru_output_parser) -- solo si esos archivos de salida existen
-   (el usuario puede tener IPRINT que no genera alguno de los dos).
+   generar_resumen_coberturas + generar_resumen_humedales siempre, y
+   organizar output.rch (swat_io.rch_parser), output.sub
+   (swat_io.sub_output_parser) y output.hru (swat_io.hru_output_parser)
+   según ``output_options`` (``OutputOrganizeOptions``, ver
+   scenarios/nbs_area_batch.py -- pedido explícito del usuario, 2026-08-12,
+   mismo control que ya tenía "NbS area batch": default organiza los tres
+   si existen, mismo motivo de siempre por el que puede faltar alguno --
+   IPRINT que no genera esa salida).
 5. Escribe un reporte del escenario (subcuencas modificadas/omitidas y por
    qué) en ``tool_outputs/batch_report.json`` de esa copia.
 
@@ -48,6 +52,14 @@ from scenarios.land_cover_reallocation import (
     SubbasinReallocationResult,
     plan_batch_reallocation,
 )
+# OutputOrganizeOptions se definió originalmente para "NbS area batch" (ver
+# scenarios/nbs_area_batch.py), pero pasó a ser compartida por ambas
+# secciones de esta pestaña -- pedido explícito del usuario, 2026-08-12:
+# quería el mismo control de qué organizar (antes esta función organizaba
+# .rch/.hru siempre sin preguntar, y nunca organizaba .sub) también acá.
+# Vive en scenarios/ y no en engine/ para no invertir la dirección de
+# dependencia (engine depende de scenarios, nunca al revés).
+from scenarios.nbs_area_batch import OutputOrganizeOptions
 from swat_io.cio_parser import parse_run_settings
 from swat_io.hru.models import HRUFile
 from swat_io.hru.scanner import parse_hru_directory
@@ -57,6 +69,12 @@ from swat_io.rch_parser import (
     export_rch_timeseries_csvs,
     parse_rch_file,
     rch_timeseries_dir,
+)
+from swat_io.sub_output_parser import (
+    build_sub_timeseries,
+    export_sub_timeseries_csvs,
+    parse_sub_file,
+    sub_timeseries_dir,
 )
 
 ProgressCallback = Callable[[str], None]
@@ -137,24 +155,34 @@ def _write_batch_report(
     return dest
 
 
-def _organize_outputs(scenario_dir: Path, report: ProgressCallback) -> None:
+def _organize_outputs(scenario_dir: Path, options: OutputOrganizeOptions, report: ProgressCallback) -> None:
     generar_resumen_coberturas(scenario_dir)
     generar_resumen_humedales(scenario_dir)
 
     txtinout_dir = scenario_dir / "TxtInOut"
     rch_path = txtinout_dir / "output.rch"
+    sub_path = txtinout_dir / "output.sub"
     hru_output_path = txtinout_dir / "output.hru"
-    if not rch_path.is_file() and not hru_output_path.is_file():
+
+    wants_rch = options.rch and rch_path.is_file()
+    wants_sub = options.sub and sub_path.is_file()
+    wants_hru = options.hru and hru_output_path.is_file()
+    if not (wants_rch or wants_sub or wants_hru):
         return
 
     run_settings = parse_run_settings(txtinout_dir / "file.cio")
 
-    if rch_path.is_file():
+    if wants_rch:
         raw = parse_rch_file(rch_path)
         timeseries = build_rch_timeseries(raw, run_settings)
         export_rch_timeseries_csvs(timeseries, rch_timeseries_dir(scenario_dir))
 
-    if hru_output_path.is_file():
+    if wants_sub:
+        raw = parse_sub_file(sub_path)
+        timeseries = build_sub_timeseries(raw, run_settings)
+        export_sub_timeseries_csvs(timeseries, sub_timeseries_dir(scenario_dir))
+
+    if wants_hru:
         build_hru_output_database(
             hru_output_path, run_settings, hru_output_db_path(scenario_dir), report_progress=report
         )
@@ -167,13 +195,24 @@ def run_land_cover_batch(
     swat_executable: Path,
     target_executable_name: str,
     on_progress: ProgressCallback | None = None,
+    output_options: OutputOrganizeOptions | None = None,
 ) -> list[ScenarioRunResult]:
     """Corre la serie completa de ``config.target_pct_series``, cada paso
     calculado de forma independiente desde ``reference_project_dir`` (que
-    nunca se modifica)."""
+    nunca se modifica).
+
+    ``output_options`` (default None -> ``OutputOrganizeOptions()``, los
+    tres en True -- mismo comportamiento "organizar todo lo que exista" que
+    ya tenía esta función) elige qué salidas organizar después de cada
+    corrida, mismo criterio y mismo tipo que
+    ``scenarios.nbs_area_batch.OutputOrganizeOptions`` / la tarjeta "NbS
+    area batch" de esta misma pestaña, pedido explícito del usuario
+    (2026-08-12) para tener el mismo control acá -- antes esta función
+    organizaba .rch/.hru siempre sin preguntar, y nunca organizaba .sub."""
     reference_project_dir = Path(reference_project_dir)
     destination_dir = Path(destination_dir)
     destination_dir.mkdir(parents=True, exist_ok=True)
+    output_options = output_options or OutputOrganizeOptions()
 
     def report(message: str) -> None:
         if on_progress is not None:
@@ -228,7 +267,7 @@ def run_land_cover_batch(
                 raise RuntimeError(f"swat2012.exe terminó con código {run_result.exit_code}")
 
             report(f"{step_label}: organizando resultados...")
-            _organize_outputs(scenario_dir, report)
+            _organize_outputs(scenario_dir, output_options, report)
 
             results.append(
                 ScenarioRunResult(

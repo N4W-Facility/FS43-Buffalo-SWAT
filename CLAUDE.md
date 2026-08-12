@@ -479,14 +479,20 @@ vez de CSV — ver esa pestaña más abajo.
   swat2012.exe sobre la copia (`engine.run.run_scenario`, reutilizado tal
   cual); y corre automáticamente el mismo post-procesamiento que hoy el
   usuario dispara a mano desde Summary/Results/HRU Results
-  (`generar_resumen_coberturas`, `generar_resumen_humedales`, organizar
-  `output.rch` y `output.hru` — cada uno reutilizado sin cambios, y solo
-  si el archivo de salida correspondiente existe). Escribe además un
-  reporte por escenario (`tool_outputs/batch_report.json`: qué subcuencas
-  se modificaron y cuáles se omitieron y por qué). Un fallo puntual (copia,
-  cálculo, SWAT, o post-procesamiento) en un paso de la serie no aborta el
-  batch completo — queda registrado como error en ese paso y el batch
-  sigue con el siguiente.
+  (`generar_resumen_coberturas`/`generar_resumen_humedales` siempre;
+  organizar `output.rch`/`output.sub`/`output.hru` según tres checkboxes
+  nuevos en la UI — `OutputOrganizeOptions`, ver
+  `scenarios/nbs_area_batch.py`, pedido explícito del usuario 2026-08-12
+  para tener el mismo control que ya tenía "NbS area batch": antes esta
+  función organizaba `.rch`/`.hru` siempre sin preguntar y nunca organizaba
+  `.sub`; los tres tildados por default preserva el comportamiento previo.
+  Cada checkbox además exige que el archivo de salida correspondiente
+  exista, igual que antes). Escribe además un reporte por escenario
+  (`tool_outputs/batch_report.json`: qué subcuencas se modificaron y
+  cuáles se omitieron y por qué). Un fallo puntual (copia, cálculo, SWAT, o
+  post-procesamiento) en un paso de la serie no aborta el batch completo —
+  queda registrado como error en ese paso y el batch sigue con el
+  siguiente.
 
   Sin una lista curada de coberturas/pendientes/suelos válidos (a
   diferencia de Wetlands y sus 20 campos fijos), el usuario no tiene forma

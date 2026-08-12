@@ -6,6 +6,7 @@ import pytest
 from engine import batch_run
 from engine.batch_run import BATCH_REPORT_FILENAME, run_land_cover_batch
 from scenarios.land_cover_config import LandCoverBatchConfig
+from scenarios.nbs_area_batch import OutputOrganizeOptions
 from swat_io.hru.parser import parse_hru_file
 
 
@@ -232,3 +233,62 @@ def test_organizes_rch_and_hru_outputs_only_when_present(
     assert "build_rch" in calls
     assert "export_rch" in calls
     assert "build_hru_db" not in calls
+
+
+def test_organizes_sub_output_only_when_present_and_selected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reference_project_dir: Path,
+    swat_executable: Path,
+    batch_config: LandCoverBatchConfig,
+):
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FakePopen(a[0], returncode=0))
+    (reference_project_dir / "TxtInOut" / "output.sub").write_text("")
+
+    calls: list[str] = []
+    monkeypatch.setattr(batch_run, "parse_run_settings", lambda cio_path: calls.append("cio") or object())
+    monkeypatch.setattr(batch_run, "parse_sub_file", lambda path: calls.append("parse_sub") or object())
+    monkeypatch.setattr(batch_run, "build_sub_timeseries", lambda raw, settings: calls.append("build_sub") or object())
+    monkeypatch.setattr(batch_run, "export_sub_timeseries_csvs", lambda ts, dest: calls.append("export_sub"))
+
+    run_land_cover_batch(
+        reference_project_dir, tmp_path / "batch_out_1", batch_config, swat_executable, "swatUser.exe",
+        output_options=OutputOrganizeOptions(rch=False, sub=True, hru=False),
+    )
+    assert "parse_sub" in calls
+    assert "export_sub" in calls
+
+    calls.clear()
+    run_land_cover_batch(
+        reference_project_dir, tmp_path / "batch_out_2", batch_config, swat_executable, "swatUser.exe",
+        output_options=OutputOrganizeOptions(rch=False, sub=False, hru=False),
+    )
+    assert calls == []
+
+
+def test_output_options_default_organizes_everything_present(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reference_project_dir: Path,
+    swat_executable: Path,
+    batch_config: LandCoverBatchConfig,
+):
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FakePopen(a[0], returncode=0))
+    (reference_project_dir / "TxtInOut" / "output.rch").write_text("")
+    (reference_project_dir / "TxtInOut" / "output.sub").write_text("")
+
+    calls: list[str] = []
+    monkeypatch.setattr(batch_run, "parse_run_settings", lambda cio_path: calls.append("cio") or object())
+    monkeypatch.setattr(batch_run, "parse_rch_file", lambda path: calls.append("parse_rch") or object())
+    monkeypatch.setattr(batch_run, "build_rch_timeseries", lambda raw, settings: object())
+    monkeypatch.setattr(batch_run, "export_rch_timeseries_csvs", lambda ts, dest: None)
+    monkeypatch.setattr(batch_run, "parse_sub_file", lambda path: calls.append("parse_sub") or object())
+    monkeypatch.setattr(batch_run, "build_sub_timeseries", lambda raw, settings: object())
+    monkeypatch.setattr(batch_run, "export_sub_timeseries_csvs", lambda ts, dest: None)
+
+    # Sin output_options (None -> default): mismo comportamiento "organizar
+    # todo lo que exista" que tenía la función antes de este parámetro.
+    run_land_cover_batch(reference_project_dir, tmp_path / "batch_out", batch_config, swat_executable, "swatUser.exe")
+
+    assert "parse_rch" in calls
+    assert "parse_sub" in calls
