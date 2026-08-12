@@ -510,6 +510,7 @@
   "nbs_tab.applying": "Applying NbS...",
   "nbs_tab.apply_summary": "Applied to {applied}/{total} HRU (plant_id={plant_id}, cpnm={cpnm}). See log below for details.",
   "nbs_tab.apply_error": "Could not apply the NbS: {error}",
+  "nbs_tab.apply_report_saved": "Report saved: {path}",
   "nbs_tab.log_line_ok": "[OK] subbasin {subbasin} / HRU {hru}",
   "nbs_tab.log_line_error": "[ERROR] subbasin {subbasin} / HRU {hru}: {error}",
 
@@ -525,6 +526,7 @@
   "nbs_tab.area_col_coverage": "Coverage",
   "nbs_tab.area_col_percent": "% of area",
   "nbs_tab.area_total_percent_label": "Total: {pct:.1f}%",
+  "nbs_tab.area_priority_help": "When a source coverage has more HRUs than needed to cover its requested area, these two fields decide which ones are converted first. Each field takes a list of values separated by '>', most important first (for example '0-9999>9999-9999' to prefer flatter slope ranges before steeper ones, using the same slope/soil labels your project already uses). Slope is applied first; soil only breaks ties among HRUs that tied on slope. Any value you don't list is treated as one shared lowest-priority group, after every value you did name. Within whichever group ends up supplying the area, the smallest HRUs are picked first, to leave as little leftover area as possible. Leave one or both fields blank to skip that ranking -- HRUs are then picked with no particular slope/soil preference.",
   "nbs_tab.area_slope_priority_label": "Slope priority (optional, e.g. 0-9999>9999-9999):",
   "nbs_tab.area_soil_priority_label": "Soil priority (optional):",
   "nbs_tab.area_preview_button": "Preview",
@@ -532,6 +534,7 @@
   "nbs_tab.area_no_coverage_selected_error": "Select a coverage first.",
   "nbs_tab.area_invalid_percent_error": "Enter a valid percentage greater than 0.",
   "nbs_tab.area_duplicate_coverage_error": "'{coverage}' is already in the list.",
+  "nbs_tab.area_percent_exceeds_total_error": "Adding {pct:.1f}% would bring the total to {total:.1f}%, which is over 100%. Source percentages can't add up to more than 100% -- lower this value or remove/adjust another row first.",
   "nbs_tab.area_invalid_total_area_error": "Total area (ha) must be a valid number greater than 0.",
   "nbs_tab.area_preview_header": "Preview for subbasin {subbasin} ({area:.2f} ha total, {sub_area:.2f} ha subbasin):",
   "nbs_tab.area_preview_line": "{coverage}: requested {requested:.2f} ha -> selected {selected:.2f} ha from {count} HRU {hru_ids}",

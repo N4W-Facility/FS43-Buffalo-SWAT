@@ -3,13 +3,22 @@ TxtInOut sintético autocontenido en tmp_path -- nunca sobre un modelo real
 (ver CLAUDE.md: nunca escribir sobre la carpeta de referencia)."""
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from scenarios.nbs import NbSDefinition, NbSNewCoverage, NbSOperation
-from scenarios.nbs_apply import NbSApplyError, apply_nbs, sync_new_coverage_to_plant_dat, validate_nbs_definition
+from scenarios.nbs_apply import (
+    NbSApplyError,
+    apply_nbs,
+    sync_new_coverage_to_plant_dat,
+    validate_nbs_definition,
+    write_apply_report_csv,
+)
 from swat_io.plant.parser import parse_plant_dat_file
+from tests.helpers import write_synthetic_sub
 
 _PLANT_DAT = (
     "   1  AGRL   4\r\n"
@@ -66,6 +75,8 @@ def project(tmp_path: Path) -> Path:
     (txtinout / "000010001.hru").write_text(_HRU, encoding="utf-8")
     (txtinout / "000010001.mgt").write_text(_MGT, encoding="utf-8")
     (txtinout / "000010001.sol").write_text(_SOL, encoding="utf-8")
+    write_synthetic_sub(txtinout / "000010000.sub", area_km2=10.0)
+    (txtinout / "000010000.pnd").write_text("", encoding="utf-8")  # discover_subbasins exige el par .sub/.pnd
     return tmp_path
 
 
@@ -120,6 +131,42 @@ def test_apply_existing_coverage_writes_hru_and_mgt(project: Path) -> None:
     sol_text = (project / "TxtInOut" / "000010001.sol").read_text(encoding="utf-8")
     assert sol_text == _SOL
     assert "Luse:AGRL" in sol_text
+
+
+def test_apply_report_csv_includes_hru_fr_and_area_ha(project: Path) -> None:
+    report = apply_nbs(project, _forest_nbs_existing(), [(1, 1)])
+
+    csv_path = write_apply_report_csv(project, report, datetime(2026, 8, 12, 10, 30, 0))
+
+    assert csv_path.name == "nbs_apply_report_Reforest_with_existing_FRST_20260812_103000.csv"
+    assert csv_path.parent == project / "tool_outputs"
+
+    df = pd.read_csv(csv_path)
+    assert list(df.columns) == ["subbasin", "hru", "status", "hru_fr", "hru_area_ha", "message"]
+    row = df.iloc[0]
+    assert row["subbasin"] == 1
+    assert row["hru"] == 1
+    assert row["status"] == "applied"
+    assert row["hru_fr"] == pytest.approx(0.75)
+    # subbasin 1 = 10 km2 (write_synthetic_sub) = 1000 ha; HRU_FR=0.75 -> 750 ha
+    assert row["hru_area_ha"] == pytest.approx(750.0)
+
+
+def test_apply_report_csv_blank_area_when_sub_file_missing(tmp_path: Path) -> None:
+    txtinout = tmp_path / "TxtInOut"
+    txtinout.mkdir()
+    (txtinout / "plant.dat").write_text(_PLANT_DAT, encoding="utf-8", newline="")
+    (txtinout / "000010001.hru").write_text(_HRU, encoding="utf-8")
+    (txtinout / "000010001.mgt").write_text(_MGT, encoding="utf-8")
+    (txtinout / "000010001.sol").write_text(_SOL, encoding="utf-8")
+    # a propósito, sin .sub -- la subcuenca no es localizable
+
+    report = apply_nbs(tmp_path, _forest_nbs_existing(), [(1, 1)])
+    csv_path = write_apply_report_csv(tmp_path, report, datetime(2026, 8, 12, 10, 30, 0))
+
+    df = pd.read_csv(csv_path)
+    assert df.iloc[0]["hru_fr"] == pytest.approx(0.75)
+    assert pd.isna(df.iloc[0]["hru_area_ha"])
 
 
 _RFOR_PHYSIOLOGY = {

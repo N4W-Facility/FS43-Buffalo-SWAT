@@ -38,9 +38,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 from swat_io.common.atomic_write import atomic_write_bytes
+from swat_io.discovery import discover_subbasins
 from swat_io.hru.models import HRURawLine
 from swat_io.hru.parser import parse_hru_file
 from swat_io.mgt.models import MGTOperation, MGTRawLine
@@ -48,6 +52,8 @@ from swat_io.mgt.parser import parse_mgt_file
 from swat_io.plant.models import LINE2_FIELDS, LINE3_FIELDS, LINE4_FIELDS, LINE5_FIELDS, build_plant_record
 from swat_io.plant.parser import parse_plant_dat_file
 from swat_io.sol_parser import read_hydrologic_group
+from swat_io.sub_parser import parse_sub_file
+from swat_io.tool_outputs import tool_outputs_dir
 
 _LUSE_TITLE_RE = re.compile(r"(Luse\s*:\s*)(\S+)", re.IGNORECASE)
 
@@ -85,6 +91,12 @@ class NbSApplyHRUResult:
     hru: int
     status: str  # "applied" | "error"
     message: str = ""
+    # HRU_FR (fracción del área de la subcuenca que ocupa esta HRU, no de
+    # la cuenca completa) tal como estaba en el .hru al momento de aplicar
+    # -- la NbS nunca la modifica (solo cambia cobertura/manejo, no área),
+    # así que es el mismo valor antes y después. None si el .hru no llegó
+    # a parsearse (ej. archivo no encontrado).
+    hru_fr: float | None = None
 
 
 @dataclass
@@ -244,6 +256,12 @@ def _apply_to_one_hru(
     if not hru_path.exists() or not mgt_path.exists():
         return NbSApplyHRUResult(subbasin, hru, "error", "No se encontraron los archivos .hru/.mgt de esa HRU.")
 
+    # HRU_FR se lee del .hru real antes de cualquier cambio -- la NbS nunca
+    # la modifica (solo CANMX/OV_N/RSDIN, nunca el área), así que capturarla
+    # acá ya es el valor final para el reporte, se aplique o no el resto.
+    hru_file = parse_hru_file(hru_path)
+    hru_fr = hru_file.get_value("HRU_FR")
+
     hydgrp = read_hydrologic_group(sol_path) if sol_path.exists() else None
     cn2_value = nbs.cn2_by_hsg.get(hydgrp) if hydgrp else None
     if cn2_value is None:
@@ -251,9 +269,9 @@ def _apply_to_one_hru(
             subbasin, hru, "error",
             f"La NbS no define CN2 para el grupo hidrológico de suelo de esta HRU "
             f"({hydgrp or 'desconocido'}); no se escribió nada en esta HRU.",
+            hru_fr=hru_fr,
         )
 
-    hru_file = parse_hru_file(hru_path)
     _update_luse_title(hru_file.lines, HRURawLine, nbs.target_lulc)
     for name, value in nbs.hru_params.items():
         if value is not None and hru_file.has_parameter(name):
@@ -264,6 +282,7 @@ def _apply_to_one_hru(
         return NbSApplyHRUResult(
             subbasin, hru, "error",
             "Validación .hru falló: " + "; ".join(issue.message for issue in blocking),
+            hru_fr=hru_fr,
         )
 
     mgt_file = parse_mgt_file(mgt_path)
@@ -293,7 +312,7 @@ def _apply_to_one_hru(
     atomic_write_bytes(hru_path, hru_file.render().encode(hru_file.encoding))
     atomic_write_bytes(mgt_path, mgt_file.render().encode(mgt_file.encoding))
 
-    return NbSApplyHRUResult(subbasin, hru, "applied")
+    return NbSApplyHRUResult(subbasin, hru, "applied", hru_fr=hru_fr)
 
 
 def apply_nbs(project_dir: str | Path, nbs: NbSDefinition, targets: list[tuple[int, int]]) -> NbSApplyReport:
@@ -322,3 +341,81 @@ def apply_nbs(project_dir: str | Path, nbs: NbSDefinition, targets: list[tuple[i
         report.results.append(result)
 
     return report
+
+
+_APPLY_REPORT_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _subbasin_area_ha_by_id(txtinout_dir: Path, subbasin_ids: set[int]) -> dict[int, float | None]:
+    """Área real (ha) de cada subcuenca en ``subbasin_ids``, leída de su
+    .sub (SUB_KM * 100 -- mismo cálculo que scenarios.nbs_area_apply). None
+    para una subcuenca sin .sub localizable o que no pudo parsearse, en vez
+    de abortar el reporte entero por una subcuenca puntual.
+
+    ``discover_subbasins`` escanea *todo* el TxtInOut y lanza si encuentra
+    un .sub sin su .pnd correspondiente (ver swat_io.discovery) -- un
+    problema en una subcuenca ajena a esta aplicación no debe tumbar la
+    generación del reporte de auditoría después de que ya se escribió todo
+    en disco, así que ese fallo también degrada a "área desconocida" en vez
+    de propagar la excepción."""
+    if not subbasin_ids:
+        return {}
+    try:
+        entries = {s.subbasin_id: s for s in discover_subbasins(txtinout_dir) if s.subbasin_id in subbasin_ids}
+    except Exception:  # noqa: BLE001 - reporte de auditoría no debe fallar por un .pnd/.sub ajeno
+        return {subbasin_id: None for subbasin_id in subbasin_ids}
+    areas: dict[int, float | None] = {}
+    for subbasin_id in subbasin_ids:
+        entry = entries.get(subbasin_id)
+        if entry is None:
+            areas[subbasin_id] = None
+            continue
+        try:
+            areas[subbasin_id] = parse_sub_file(entry.sub_file, subbasin_id).area_km2 * 100
+        except Exception:  # noqa: BLE001 - un .sub puntual roto no debe tumbar el reporte
+            areas[subbasin_id] = None
+    return areas
+
+
+def write_apply_report_csv(project_dir: str | Path, report: NbSApplyReport, applied_at: datetime) -> Path:
+    """Escribe un CSV en tool_outputs/ con una fila por HRU objetivo de esta
+    aplicación (subbasin, hru, status, hru_fr, hru_area_ha, message) --
+    pedido explícito del usuario, 2026-08-12: quería un reporte auditable
+    de qué HRU cambió cada aplicación de una NbS, qué fracción de su
+    subcuenca (HRU_FR) representaba cada una en ese momento, y el área
+    equivalente en hectáreas. hru_area_ha = hru_fr * área real de esa
+    subcuenca (de su .sub, SUB_KM*100 -- nunca un valor inventado); queda
+    en blanco si hru_fr es None (HRU cuyo .hru no llegó a parsearse) o si
+    no se pudo leer el .sub de esa subcuenca. Los targets pueden abarcar
+    más de una subcuenca (Apply manual no resetea la selección al cambiar
+    de subcuenca), así que el área se resuelve una vez por subcuenca única,
+    no por fila. Incluye también las HRU que fallaron (status="error"), con
+    hru_fr/hru_area_ha si el .hru llegó a parsearse antes del fallo -- así
+    el CSV documenta el intento completo, no solo lo aplicado. Un nombre de
+    archivo con timestamp evita pisar el reporte de una aplicación anterior
+    de la misma NbS."""
+    txtinout_dir = Path(project_dir) / "TxtInOut"
+    subbasin_ids = {r.subbasin for r in report.results}
+    area_by_subbasin = _subbasin_area_ha_by_id(txtinout_dir, subbasin_ids)
+
+    rows = []
+    for r in report.results:
+        subbasin_area_ha = area_by_subbasin.get(r.subbasin)
+        hru_area_ha = r.hru_fr * subbasin_area_ha if r.hru_fr is not None and subbasin_area_ha is not None else None
+        rows.append(
+            {
+                "subbasin": r.subbasin,
+                "hru": r.hru,
+                "status": r.status,
+                "hru_fr": r.hru_fr,
+                "hru_area_ha": hru_area_ha,
+                "message": r.message,
+            }
+        )
+    df = pd.DataFrame(rows, columns=["subbasin", "hru", "status", "hru_fr", "hru_area_ha", "message"])
+
+    safe_name = _APPLY_REPORT_NAME_RE.sub("_", report.nbs_name).strip("_") or "nbs"
+    timestamp = applied_at.strftime("%Y%m%d_%H%M%S")
+    csv_path = tool_outputs_dir(project_dir) / f"nbs_apply_report_{safe_name}_{timestamp}.csv"
+    df.to_csv(csv_path, index=False)
+    return csv_path

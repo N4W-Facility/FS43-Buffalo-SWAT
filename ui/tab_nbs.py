@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 from typing import Callable
@@ -33,7 +34,7 @@ from config.cpnm_names import name_for
 from config.settings import ConfigManager
 from scenarios.hru_draft import list_subbasin_hru_ids, load_subbasin_hru_files
 from scenarios.nbs import NbSDefinition, delete_definition, load_library
-from scenarios.nbs_apply import NbSApplyReport, apply_nbs
+from scenarios.nbs_apply import NbSApplyReport, apply_nbs, write_apply_report_csv
 from scenarios.nbs_area_apply import (
     AreaAllocationPlan,
     parse_priority_text,
@@ -49,6 +50,11 @@ from .dialog_confirm import ConfirmDialog
 from .nbs_wizard_window import NbSWizardWindow
 from .tasks import run_in_background
 from .widgets import bind_responsive_wraplength, build_scrollable_treeview, palette, style_combobox
+
+# Misma tolerancia que scenarios.nbs_area_apply.validate_source_allocations
+# (_DEFAULT_PCT_SUM_TOLERANCE) -- para que "completo" en la UI coincida
+# exactamente con lo que el backend acepta al calcular el plan.
+_AREA_PCT_SUM_TOLERANCE = 0.5
 
 
 class NbSTab(ctk.CTkFrame):
@@ -354,8 +360,15 @@ class NbSTab(ctk.CTkFrame):
         )
         self._area_total_pct_label.grid(row=6, column=0, sticky="w", padx=16)
 
+        priority_help = ctk.CTkLabel(
+            card, text=self._config.text("nbs_tab.area_priority_help"),
+            text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
+        )
+        priority_help.grid(row=7, column=0, sticky="ew", padx=16, pady=(12, 0))
+        bind_responsive_wraplength(priority_help)
+
         priority_row = ctk.CTkFrame(card, fg_color="transparent")
-        priority_row.grid(row=7, column=0, sticky="ew", padx=16, pady=(12, 4))
+        priority_row.grid(row=8, column=0, sticky="ew", padx=16, pady=(4, 4))
         priority_row.columnconfigure(1, weight=1)
         priority_row.columnconfigure(3, weight=1)
         ctk.CTkLabel(
@@ -372,7 +385,7 @@ class NbSTab(ctk.CTkFrame):
         self._area_soil_entry.grid(row=0, column=3, sticky="ew", padx=(8, 0))
 
         controls = ctk.CTkFrame(card, fg_color="transparent")
-        controls.grid(row=8, column=0, sticky="ew", padx=16, pady=(12, 8))
+        controls.grid(row=9, column=0, sticky="ew", padx=16, pady=(12, 8))
         controls.columnconfigure(0, weight=1)
         self._area_status_label = ctk.CTkLabel(
             controls, text="", text_color=self._colors.get("text_secondary"), anchor="w", justify="left"
@@ -387,13 +400,14 @@ class NbSTab(ctk.CTkFrame):
         )
         self._area_preview_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
         self._area_apply_button = ctk.CTkButton(
-            controls, text=self._config.text("nbs_tab.area_apply_button"), command=self._on_area_apply_clicked
+            controls, text=self._config.text("nbs_tab.area_apply_button"), command=self._on_area_apply_clicked,
+            state="disabled",
         )
         self._area_apply_button.grid(row=0, column=2, sticky="e")
 
         log_frame = ctk.CTkFrame(card, fg_color=self._colors.get("surface"))
-        log_frame.grid(row=9, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        card.rowconfigure(9, weight=1)
+        log_frame.grid(row=10, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        card.rowconfigure(10, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
         self._area_log = ctk.CTkTextbox(log_frame, wrap="word", state="disabled", height=100)
@@ -588,6 +602,14 @@ class NbSTab(ctk.CTkFrame):
 
         run_in_background(self, work, on_progress=lambda _m: None, on_done=self._on_apply_done, on_error=self._on_apply_error)
 
+    def _write_apply_report(self, report: NbSApplyReport) -> str:
+        """Escribe el CSV de auditoría de esta aplicación (subbasin/hru/
+        status/hru_fr/message) y devuelve su ruta como texto para el log --
+        compartido por Apply manual y Apply by area, ambos usan el mismo
+        NbSApplyReport."""
+        csv_path = write_apply_report_csv(self._project_dir, report, datetime.now())
+        return str(csv_path)
+
     def _on_apply_done(self, report: NbSApplyReport) -> None:
         self._apply_status_label.configure(
             text=self._config.text("nbs_tab.apply_summary").format(
@@ -595,7 +617,7 @@ class NbSTab(ctk.CTkFrame):
             ),
             text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
         )
-        lines = []
+        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=self._write_apply_report(report))]
         for result in report.results:
             if result.status == "applied":
                 lines.append(self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru))
@@ -617,7 +639,7 @@ class NbSTab(ctk.CTkFrame):
     def _finish_apply(self) -> None:
         self._apply_button.configure(state="normal")
         self._area_preview_button.configure(state="normal")
-        self._area_apply_button.configure(state="normal")
+        self._update_area_apply_button_state()
         self._on_run_state_changed(False)
 
     def _set_apply_log(self, text: str) -> None:
@@ -706,6 +728,17 @@ class NbSTab(ctk.CTkFrame):
             )
             return
 
+        current_total = sum(p for _, p in self._area_source_rows)
+        prospective_total = current_total + pct
+        if prospective_total - 100 > _AREA_PCT_SUM_TOLERANCE:
+            self._area_status_label.configure(
+                text=self._config.text("nbs_tab.area_percent_exceeds_total_error").format(
+                    pct=pct, total=prospective_total
+                ),
+                text_color=self._colors.get("error"),
+            )
+            return
+
         self._area_source_rows.append((coverage, pct))
         self._area_percent_entry.delete(0, "end")
         self._area_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
@@ -727,8 +760,20 @@ class NbSTab(ctk.CTkFrame):
 
         total = sum(pct for _, pct in self._area_source_rows)
         label = self._config.text("nbs_tab.area_total_percent_label").format(pct=total)
-        color = self._colors.get("text_secondary") if abs(total - 100) <= 0.5 else self._colors.get("warning")
+        complete = abs(total - 100) <= _AREA_PCT_SUM_TOLERANCE
+        color = self._colors.get("success") if complete else self._colors.get("text_secondary")
         self._area_total_pct_label.configure(text=label, text_color=color)
+        self._update_area_apply_button_state()
+
+    def _update_area_apply_button_state(self) -> None:
+        """Habilita 'Apply by area' solo cuando el % acumulado de coberturas
+        fuente llega a 100 (misma tolerancia que valida el backend) --
+        pedido explícito del usuario, 2026-08-12: antes solo se avisaba con
+        el color de la etiqueta y el click fallaba recién al intentar
+        calcular el plan."""
+        total = sum(pct for _, pct in self._area_source_rows)
+        complete = abs(total - 100) <= _AREA_PCT_SUM_TOLERANCE
+        self._area_apply_button.configure(state="normal" if complete else "disabled")
 
     def _run_area_plan(self, on_ready: Callable[[NbSDefinition, AreaAllocationPlan], None]) -> None:
         """Valida los inputs (barato) en el hilo principal y calcula el plan
@@ -794,7 +839,7 @@ class NbSTab(ctk.CTkFrame):
 
         def on_done(plan: AreaAllocationPlan | None) -> None:
             self._area_preview_button.configure(state="normal")
-            self._area_apply_button.configure(state="normal")
+            self._update_area_apply_button_state()
             if plan is None:
                 return
             self._area_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
@@ -802,7 +847,7 @@ class NbSTab(ctk.CTkFrame):
 
         def on_error(error: Exception) -> None:
             self._area_preview_button.configure(state="normal")
-            self._area_apply_button.configure(state="normal")
+            self._update_area_apply_button_state()
             self._area_status_label.configure(
                 text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
                 text_color=self._colors.get("error"),
@@ -878,7 +923,7 @@ class NbSTab(ctk.CTkFrame):
             ),
             text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
         )
-        lines = []
+        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=self._write_apply_report(report))]
         for result in report.results:
             if result.status == "applied":
                 lines.append(self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru))
@@ -900,7 +945,7 @@ class NbSTab(ctk.CTkFrame):
     def _finish_area_apply(self) -> None:
         self._apply_button.configure(state="normal")
         self._area_preview_button.configure(state="normal")
-        self._area_apply_button.configure(state="normal")
+        self._update_area_apply_button_state()
         self._on_run_state_changed(False)
 
     def _set_area_log(self, text: str) -> None:
