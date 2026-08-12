@@ -22,10 +22,19 @@ en hectáreas) y las columnas de cobertura vuelven a ser % de ESA área
 de Apply by area (nbs_area_apply.plan_area_allocation) -- por eso ahora SÍ
 tienen que sumar 100 (mismo criterio de validate_source_allocations, con
 la misma tolerancia), a diferencia de la v1 donde alcanzaba con "≤100".
-``plan_mass_area_allocation`` valida además que ``area_ha`` no supere el
-área real de la subcuenca (leída de su .sub) -- no tiene sentido pedir más
-área NbS de la que la subcuenca tiene, y antes esto quedaba implícito en
-que el % nunca podía superar 100 del área real.
+``plan_mass_area_allocation`` valida además que el área pedida se pueda
+cubrir de verdad con las coberturas fuente que el usuario asignó en esa
+fila -- no contra el área total de la subcuenca (que sería un límite
+demasiado optimista si el usuario no asignó todas las coberturas
+disponibles), sino contra ``AreaAllocationPlan.total_deficit_ha`` que ya
+calcula ``plan_area_allocation`` recorriendo las HRU reales de esas
+coberturas puntuales (pedido explícito del usuario, 2026-08-12, tras ver
+que el mensaje de skip original solo comparaba contra el área total de la
+subcuenca sin decirle qué área SÍ era alcanzable con lo que había
+asignado). Si hay déficit, la subcuenca se omite (``result.skipped``) con
+un mensaje que da el área máxima alcanzable, desglosada por cobertura
+fuente, para que el usuario sepa exactamente a qué bajar ``area_ha`` (o
+qué cobertura agregar) en vez de tener que adivinar.
 
 Prioridad de pendiente/suelo: una sola configuración global para todo el
 batch (mismo criterio que ``donor_priority`` en scenarios.land_cover_config
@@ -58,7 +67,7 @@ from .nbs_area_apply import AreaAllocationPlan, plan_area_allocation
 _SUBBASIN_COLUMN = "subbasin"
 _AREA_COLUMN = "area_ha"
 _ROW_PCT_SUM_TOLERANCE = 0.5  # mismo valor que nbs_area_apply._DEFAULT_PCT_SUM_TOLERANCE
-_AREA_OVER_SUBBASIN_TOLERANCE = 1e-6
+_AREA_DEFICIT_TOLERANCE = 1e-6  # mismo valor que nbs_area_apply._DEFAULT_TOLERANCE
 # Valor puesto en cada celda "aplicable" del template (ver
 # write_mass_allocation_template_csv) -- 0 en vez de un valor de ejemplo
 # inventado, para no arriesgar que la fila sume más de 100% con varias
@@ -170,10 +179,13 @@ def parse_mass_allocation_csv(csv_path: str | Path) -> tuple[dict[int, SubbasinA
 @dataclass
 class MassAreaAllocationResult:
     plans: list[AreaAllocationPlan] = field(default_factory=list)
-    # subcuenca -> motivo por el que no se pudo calcular ningún plan (sin
-    # .sub localizable, sin ninguna HRU, o área NbS pedida mayor al área
-    # real de la subcuenca) -- distinto de un déficit dentro de un plan ya
-    # calculado (ver AreaAllocationPlan.total_deficit_ha).
+    # subcuenca -> motivo por el que se omitió (sin .sub localizable, sin
+    # ninguna HRU, o un plan calculado cuyas coberturas fuente asignadas no
+    # alcanzan para cubrir el area_ha pedido -- AreaAllocationPlan.total_deficit_ha
+    # > 0). A diferencia de la sección manual de "Apply by area", acá un
+    # déficit NO deja el plan a medio aplicar en ``plans``: la subcuenca
+    # entera pasa a ``skipped`` (pedido explícito del usuario, 2026-08-12 --
+    # ver docstring de plan_mass_area_allocation).
     skipped: dict[int, str] = field(default_factory=dict)
 
     @property
@@ -190,9 +202,13 @@ def plan_mass_area_allocation(
 ) -> MassAreaAllocationResult:
     """Corre plan_area_allocation por cada subcuenca de ``allocations``, sin
     ningún cambio al algoritmo de selección de HRU -- ver docstring del
-    módulo. Una subcuenca sin .sub localizable, sin ninguna HRU, o cuya
-    ``area_ha`` pedida supera el área real de la subcuenca se omite
-    (``result.skipped``) en vez de abortar el resto del batch."""
+    módulo. Una subcuenca sin .sub localizable, sin ninguna HRU, o cuyas
+    coberturas fuente asignadas no alcanzan para cubrir el ``area_ha``
+    pedido se omite (``result.skipped``) en vez de abortar el resto del
+    batch -- este último caso usa el déficit que ya calcula
+    plan_area_allocation por cobertura, no una comparación contra el área
+    total de la subcuenca, para poder decirle al usuario exactamente
+    cuánta área SÍ es alcanzable con lo que asignó."""
     txtinout_dir = Path(project_dir) / "TxtInOut"
     sub_by_id = {s.subbasin_id: s for s in discover_subbasins(txtinout_dir)}
 
@@ -209,13 +225,6 @@ def plan_mass_area_allocation(
             continue
 
         subbasin_area_ha = parse_sub_file(entry.sub_file, subbasin_id).area_km2 * 100
-        if allocation.area_ha - subbasin_area_ha > _AREA_OVER_SUBBASIN_TOLERANCE:
-            result.skipped[subbasin_id] = (
-                f"El área NbS pedida ({allocation.area_ha:.2f} ha) supera el área real de la subcuenca "
-                f"({subbasin_area_ha:.2f} ha)."
-            )
-            continue
-
         plan = plan_area_allocation(
             subbasin_id, hru_files, subbasin_area_ha,
             total_area_ha=allocation.area_ha,
@@ -223,6 +232,20 @@ def plan_mass_area_allocation(
             slope_priority=slope_priority,
             soil_priority=soil_priority,
         )
+
+        if plan.total_deficit_ha > _AREA_DEFICIT_TOLERANCE:
+            achievable_ha = sum(source.selected_ha for source in plan.by_source)
+            breakdown = "; ".join(
+                f"{source.source_lulc}: {source.selected_ha:.2f} ha disponibles" for source in plan.by_source
+            )
+            result.skipped[subbasin_id] = (
+                f"El área NbS pedida ({allocation.area_ha:.2f} ha) supera el área disponible entre las "
+                f"coberturas fuente asignadas para esta subcuenca ({achievable_ha:.2f} ha en total -- "
+                f"{breakdown}). Bajá 'area_ha' a {achievable_ha:.2f} ha o menos, o agregá otra cobertura "
+                f"fuente con área disponible."
+            )
+            continue
+
         result.plans.append(plan)
 
     return result

@@ -1316,11 +1316,36 @@ class NbSTab(ctk.CTkFrame):
 
     def _render_mass_plan_preview_ready(self, _definition: NbSDefinition, result: MassAreaAllocationResult) -> None:
         self._render_mass_plan_preview(result)
+        self._block_mass_apply_if_skipped(result)
+
+    def _block_mass_apply_if_skipped(self, result: MassAreaAllocationResult) -> bool:
+        """Pedido explícito del usuario, 2026-08-12: antes un solo motivo de
+        SKIPPED (subcuenca no encontrada, sin HRU, o área NbS pedida mayor
+        al área real) no impedía aplicar -- Apply seguía escribiendo sobre
+        las subcuencas válidas del resto del plan, mismo criterio de
+        tolerancia a fallos puntuales que Batch. Para esta tarjeta en
+        particular el usuario prefiere lo contrario: cualquier SKIPPED
+        deshabilita Apply hasta que corrija el CSV y lo vuelva a cargar
+        (``_update_mass_apply_button_state``, disparado por
+        ``_on_mass_load_csv_clicked``, es lo único que lo reabilita).
+        Devuelve True si bloqueó (había algo en result.skipped)."""
+        if not result.skipped:
+            return False
+        self._mass_apply_button.configure(state="disabled")
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_skipped_blocks_apply_error").format(count=len(result.skipped)),
+            text_color=self._colors.get("error"),
+        )
+        return True
 
     def _on_mass_apply_clicked(self) -> None:
         self._run_mass_plan(self._confirm_mass_apply)
 
     def _confirm_mass_apply(self, definition: NbSDefinition, result: MassAreaAllocationResult) -> None:
+        self._render_mass_plan_preview(result)
+        if self._block_mass_apply_if_skipped(result):
+            return
+
         targets = result.targets
         if not targets:
             self._mass_status_label.configure(
@@ -1328,7 +1353,6 @@ class NbSTab(ctk.CTkFrame):
             )
             return
 
-        self._render_mass_plan_preview(result)
         message = self._config.text("nbs_tab.mass_confirm_apply").format(
             name=definition.name, count=len(targets), subbasins=len(result.plans)
         )

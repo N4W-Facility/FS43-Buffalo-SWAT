@@ -780,15 +780,28 @@ vez de CSV — ver esa pestaña más abajo.
   (`nbs_area_apply.plan_area_allocation`) — así que ahora SÍ tienen que
   sumar 100 (`parse_mass_allocation_csv`, misma tolerancia que
   `validate_source_allocations`), a diferencia de la v1 donde alcanzaba
-  con "≤100". `plan_mass_area_allocation` valida además que `area_ha` no
-  supere el área real de la subcuenca (leída de su `.sub`) — antes esto
-  quedaba implícito en que el % nunca podía superar 100 del área real; una
-  subcuenca que lo excede se omite y se reporta (`result.skipped`), mismo
-  criterio de tolerancia a fallos puntuales que ya tenía la v1 (y que
-  `parse_mass_allocation_csv` sigue aplicando para cualquier otra fila
-  puntual inválida: valor no numérico, suma ≠ 100, subcuenca repetida, sin
-  abortar el resto del CSV — mismo criterio que Batch). Con `total_area_ha`
-  ahora `allocation.area_ha` (no el área real de la subcuenca),
+  con "≤100". `plan_mass_area_allocation` valida además que el `area_ha`
+  pedido se pueda cubrir de verdad con las coberturas fuente que el
+  usuario asignó en esa fila — no contra el área total de la subcuenca
+  (revisado 2026-08-12, pedido explícito del usuario: comparar solo contra
+  el área total daba un límite demasiado optimista si el usuario no
+  asignó todas las coberturas disponibles de esa subcuenca, y el mensaje
+  de error no le decía cuánta área SÍ era alcanzable con lo que había
+  asignado), sino contra `AreaAllocationPlan.total_deficit_ha` que ya
+  calcula `plan_area_allocation` recorriendo las HRU reales de esas
+  coberturas puntuales. Si hay déficit, la subcuenca entera se omite y se
+  reporta (`result.skipped`) con un mensaje que da el área máxima
+  alcanzable desglosada por cobertura fuente (ej. "área disponible ... —
+  FRST: 50.00 ha disponibles") — a diferencia de la sección manual de
+  "Apply by area", donde un déficit no bloquea nada y el plan se aplica
+  parcial con una nota en el preview (`area_preview_deficit_line`), acá el
+  usuario explícitamente prefirió que cualquier déficit fuerce corregir el
+  CSV antes de aplicar, ver más abajo el bloqueo del botón Apply. Mismo
+  criterio de tolerancia a fallos puntuales que ya tenía la v1 para
+  cualquier otra fila puntual inválida (`parse_mass_allocation_csv`: valor
+  no numérico, suma ≠ 100, subcuenca repetida, sin abortar el resto del
+  CSV — mismo criterio que Batch). Con `total_area_ha` ahora
+  `allocation.area_ha` (no el área real de la subcuenca),
   `plan_mass_area_allocation` sigue reutilizando `plan_area_allocation`
   sin ningún cambio al algoritmo de selección de HRU, subcuenca por
   subcuenca (una subcuenca sin `.sub` localizable o sin ninguna HRU
@@ -822,6 +835,22 @@ vez de CSV — ver esa pestaña más abajo.
   misma. Los tres botones de aplicar (manual, por área, y por área en
   todas las subcuencas) se deshabilitan mutuamente mientras cualquiera
   corre, mismo motivo que ya llevó a esa regla entre los primeros dos.
+
+  **Bloqueo de Apply cuando hay subcuencas SKIPPED** (`_block_mass_apply_if_skipped`
+  en `ui/tab_nbs.py`, 2026-08-12): a diferencia de Batch y del resto de esta
+  misma tarjeta (donde un fallo puntual no aborta el resto del lote), acá
+  el usuario pidió explícitamente lo contrario — si el plan calculado
+  tiene aunque sea una subcuenca en `result.skipped` (sin importar el
+  motivo: no encontrada, sin HRU, o coberturas fuente insuficientes), el
+  botón "Apply to all subbasins" se deshabilita y no se abre el diálogo de
+  confirmación ni se escribe nada, hasta que el usuario corrija el CSV y
+  lo vuelva a cargar (`_on_mass_load_csv_clicked` es lo único que
+  rehabilita el botón vía `_update_mass_apply_button_state`). Se llama
+  tanto desde Preview como desde el propio Apply (por si el usuario le da
+  a Apply sin haber previsualizado antes) — en ambos casos primero
+  renderiza el log con el detalle de cada SKIPPED
+  (`_render_mass_plan_preview`) y después bloquea, para que el mensaje de
+  error quede acompañado del desglose de área alcanzable por subcuenca.
 
   Las tres operaciones largas de esta tarjeta (Download template, Preview,
   Apply to all subbasins) muestran una barra de progreso "vaivén" mientras

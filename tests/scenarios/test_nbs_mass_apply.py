@@ -162,7 +162,7 @@ def txtinout_dir(tmp_path: Path) -> Path:
 
 def test_plans_each_subbasin_independently(txtinout_dir: Path):
     allocations = {
-        1: SubbasinAreaAllocation(area_ha=1000.0, sources=[("FRST", 100.0)]),
+        1: SubbasinAreaAllocation(area_ha=50.0, sources=[("FRST", 100.0)]),  # FRST tiene exactamente 50 ha
         2: SubbasinAreaAllocation(area_ha=100.0, sources=[("PAST", 20.0)]),
     }
 
@@ -170,7 +170,7 @@ def test_plans_each_subbasin_independently(txtinout_dir: Path):
 
     assert result.skipped == {}
     plans_by_subbasin = {p.subbasin: p for p in result.plans}
-    assert plans_by_subbasin[1].total_area_ha == 1000.0
+    assert plans_by_subbasin[1].total_area_ha == 50.0
     assert plans_by_subbasin[1].targets == [(1, 1)]
     assert plans_by_subbasin[2].total_area_ha == 100.0
     assert plans_by_subbasin[2].by_source[0].requested_ha == 20.0  # 20% de 100 ha (area_ha), no del área total
@@ -187,18 +187,34 @@ def test_subbasin_not_found_is_skipped(txtinout_dir: Path):
 
 
 def test_area_over_subbasin_real_area_is_skipped(txtinout_dir: Path):
-    # La subcuenca 2 tiene solo 500 ha reales (ver fixture).
+    # La subcuenca 2 tiene solo 500 ha reales, toda PAST (ver fixture).
     allocations = {2: SubbasinAreaAllocation(area_ha=600.0, sources=[("PAST", 100.0)])}
 
     result = plan_mass_area_allocation(txtinout_dir.parent, allocations)
 
     assert result.plans == []
     assert 2 in result.skipped
-    assert "supera el área real" in result.skipped[2]
+    assert "supera el área disponible" in result.skipped[2]
+    assert "500.00 ha" in result.skipped[2]
+    assert "PAST: 500.00 ha disponibles" in result.skipped[2]
+
+
+def test_area_within_subbasin_but_over_assigned_source_availability_is_skipped(txtinout_dir: Path):
+    # Subcuenca 1: FRST solo tiene 50 ha (5% de 1000 ha), aunque la
+    # subcuenca completa tenga 1000 ha reales -- pedir 200 ha solo de FRST
+    # no alcanza, aunque 200 ha esté muy por debajo del área total real.
+    allocations = {1: SubbasinAreaAllocation(area_ha=200.0, sources=[("FRST", 100.0)])}
+
+    result = plan_mass_area_allocation(txtinout_dir.parent, allocations)
+
+    assert result.plans == []
+    assert 1 in result.skipped
+    assert "50.00 ha" in result.skipped[1]
+    assert "FRST: 50.00 ha disponibles" in result.skipped[1]
 
 
 def test_priorities_are_passed_through_to_every_subbasin_plan(txtinout_dir: Path):
-    allocations = {1: SubbasinAreaAllocation(area_ha=1000.0, sources=[("FRST", 100.0)])}
+    allocations = {1: SubbasinAreaAllocation(area_ha=50.0, sources=[("FRST", 100.0)])}  # FRST tiene exactamente 50 ha
 
     result = plan_mass_area_allocation(
         txtinout_dir.parent, allocations, slope_priority=["0-9999"], soil_priority=["SOIL1"]

@@ -206,3 +206,32 @@ def test_mass_apply_skips_subbasin_not_in_project_without_aborting(hidden_root, 
     _definition, result = captured[0]
     assert 99 in result.skipped
     assert [p.subbasin for p in result.plans] == [1]
+
+
+def test_mass_apply_is_blocked_when_any_subbasin_is_skipped(hidden_root, config, project, monkeypatch) -> None:
+    """Pedido explícito del usuario, 2026-08-12: a diferencia de la planificación
+    (test_mass_apply_skips_subbasin_not_in_project_without_aborting), el clic de
+    Apply en sí NO debe escribir nada si hay algún SKIPPED -- el usuario prefiere
+    forzar la corrección del CSV en vez de aplicar parcialmente sobre las
+    subcuencas válidas."""
+    add_or_replace(project, _nbs_definition())
+    _install_synchronous_mocks(monkeypatch)
+
+    started = []
+    monkeypatch.setattr("ui.tab_nbs.NbSTab._start_mass_apply", lambda self, definition, targets: started.append(targets))
+
+    tab = NbSTab(hidden_root, config)
+    tab.set_project(project)
+    tab._mass_nbs_selector.current(0)
+    tab._mass_allocations = {
+        1: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+        99: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+    }
+
+    tab._on_mass_apply_clicked()
+
+    assert started == []
+    assert tab._mass_apply_button.cget("state") == "disabled"
+    for sub_id in (1, 2):
+        hru_file = parse_hru_file(project / "TxtInOut" / f"{sub_id:05d}0001.hru")
+        assert hru_file.metadata.land_use == "AGRL"  # sin cambios: Apply se bloqueó antes de escribir
