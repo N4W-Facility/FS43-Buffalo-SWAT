@@ -759,6 +759,45 @@ vez de CSV — ver esa pestaña más abajo.
   mutuamente mientras cualquiera de los dos corre, para no arriesgar
   escrituras concurrentes sobre el mismo `TxtInOut`.
 
+  **Aplicar una NbS por área en todas las subcuencas**
+  (`scenarios/nbs_mass_apply.py`, tarjeta "Apply an NbS by area (all
+  subbasins)" de la misma pestaña, 2026-08-12): pedido explícito del
+  usuario — extensión de "Aplicar una NbS por área" de arriba para no
+  repetirla subcuenca por subcuenca. Entrada: un CSV en forma de matriz
+  (fila = subcuenca, columna = cobertura fuente, celda = % del área de esa
+  subcuenca a convertir desde esa cobertura); celda vacía = esa cobertura
+  no participa en esa subcuenca, fila sin ninguna celda = esa subcuenca no
+  participa del batch (se omite sin error). Decisión de diseño explícita,
+  distinta de la sección manual de arriba: acá no hay un campo "área total
+  a convertir" separado — cada celda ya es, directamente, el % del área
+  TOTAL de esa subcuenca (no de un subtotal libre elegido a mano). Por eso
+  las celdas de una fila NO tienen que sumar exactamente 100 (a diferencia
+  de `validate_source_allocations`, que sí lo exige para la sección
+  manual): pueden sumar menos (el resto de la subcuenca queda sin tocar)
+  pero nunca más de 100 (no se puede tomar más área de la que tiene la
+  subcuenca) — validado en `parse_mass_allocation_csv`, que además reporta
+  y omite (sin abortar el resto del CSV) cualquier fila puntual inválida
+  (valor no numérico, suma > 100, subcuenca repetida), mismo criterio de
+  tolerancia a fallos puntuales que Batch. Con `total_area_ha` ya fijado
+  como el área real de la subcuenca, `plan_mass_area_allocation` reutiliza
+  `plan_area_allocation` sin ningún cambio al algoritmo de selección de
+  HRU, subcuenca por subcuenca (una subcuenca sin `.sub` localizable o sin
+  ninguna HRU se omite y se reporta, no aborta el batch). Prioridad de
+  pendiente/suelo: una sola configuración global para todo el batch (mismo
+  criterio que `donor_priority` en Batch Scenarios), no una columna por
+  subcuenca — evita una matriz todavía más ancha sin un caso de uso real
+  detrás. Una sola NbS objetivo para todo el batch, elegida en la UI (no en
+  el CSV): los planes de todas las subcuencas se calculan por separado pero
+  se aplican en un único llamado a `scenarios.nbs_apply.apply_nbs` con los
+  targets de todas juntas (esa función ya soportaba targets de más de una
+  subcuenca). "Download template" (`write_mass_allocation_template_csv`,
+  mismo criterio que el template de Batch y "Export CSV" de HRUs) escanea
+  el proyecto y arma una fila por subcuenca real y una columna por
+  cobertura real, con la primera cobertura de cada subcuenca poblada a modo
+  de ejemplo. Los tres botones de aplicar (manual, por área, y por área en
+  todas las subcuencas) se deshabilitan mutuamente mientras cualquiera
+  corre, mismo motivo que ya llevó a esa regla entre los primeros dos.
+
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
 enforced por código todavía**. Las pestañas Wetlands y HRUs escriben sobre

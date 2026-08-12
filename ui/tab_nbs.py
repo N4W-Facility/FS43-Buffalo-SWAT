@@ -25,7 +25,7 @@ import os
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, ttk
 from typing import Callable
 
 import customtkinter as ctk
@@ -42,6 +42,12 @@ from scenarios.nbs_area_apply import (
     subbasin_land_uses,
     validate_source_allocations,
 )
+from scenarios.nbs_mass_apply import (
+    MassAreaAllocationResult,
+    parse_mass_allocation_csv,
+    plan_mass_area_allocation,
+    write_mass_allocation_template_csv,
+)
 from swat_io.discovery import discover_subbasins
 from swat_io.sub_parser import parse_sub_file
 from swat_io.tool_outputs import tool_outputs_dir
@@ -49,7 +55,7 @@ from swat_io.tool_outputs import tool_outputs_dir
 from .dialog_confirm import ConfirmDialog
 from .nbs_wizard_window import NbSWizardWindow
 from .tasks import run_in_background
-from .widgets import bind_responsive_wraplength, build_scrollable_treeview, palette, style_combobox
+from .widgets import ReadOnlyField, bind_responsive_wraplength, build_scrollable_treeview, palette, style_combobox
 
 # Misma tolerancia que scenarios.nbs_area_apply.validate_source_allocations
 # (_DEFAULT_PCT_SUM_TOLERANCE) -- para que "completo" en la UI coincida
@@ -77,6 +83,7 @@ class NbSTab(ctk.CTkFrame):
         self._targets: list[tuple[int, int]] = []
         self._area_source_rows: list[tuple[str, float]] = []
         self._area_coverage_request_id = 0
+        self._mass_allocations: dict[int, list[tuple[str, float]]] = {}
 
         self._disabled_state = self._build_disabled_state()
         self._enabled_state = self._build_enabled_state()
@@ -116,6 +123,7 @@ class NbSTab(ctk.CTkFrame):
         self._build_library_card(frame, row=2)
         self._build_apply_card(frame, row=3)
         self._build_area_apply_card(frame, row=4)
+        self._build_mass_area_apply_card(frame, row=5)
 
         return frame
 
@@ -413,12 +421,112 @@ class NbSTab(ctk.CTkFrame):
         self._area_log = ctk.CTkTextbox(log_frame, wrap="word", state="disabled", height=100)
         self._area_log.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
+    def _build_mass_area_apply_card(self, parent: ctk.CTkFrame, *, row: int) -> None:
+        card = ctk.CTkFrame(parent)
+        card.grid(row=row, column=0, sticky="ew", pady=(16, 0))
+        card.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card, text=self._config.text("nbs_tab.mass_apply_title"), text_color=self._colors.get("text_primary"),
+            font=ctk.CTkFont(size=14, weight="bold"), anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 4))
+
+        subtitle = ctk.CTkLabel(
+            card, text=self._config.text("nbs_tab.mass_apply_subtitle"), text_color=self._colors.get("text_secondary"),
+            anchor="w", justify="left",
+        )
+        subtitle.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
+        bind_responsive_wraplength(subtitle)
+
+        style = style_combobox(self._config)
+
+        nbs_row = ctk.CTkFrame(card, fg_color="transparent")
+        nbs_row.grid(row=2, column=0, sticky="ew", padx=16)
+        nbs_row.columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            nbs_row, text=self._config.text("nbs_tab.select_nbs_label"), text_color=self._colors.get("text_secondary")
+        ).grid(row=0, column=0, sticky="w")
+        self._mass_nbs_selector = ttk.Combobox(nbs_row, style=style, state="readonly", values=[], width=40)
+        self._mass_nbs_selector.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+
+        csv_row = ctk.CTkFrame(card, fg_color="transparent")
+        csv_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(12, 4))
+        csv_row.columnconfigure(0, weight=1)
+        self._mass_csv_field = ReadOnlyField(csv_row, self._config, "nbs_tab.mass_csv_label")
+        self._mass_csv_field.grid(row=0, column=0, sticky="ew")
+        self._mass_download_button = ctk.CTkButton(
+            csv_row, text=self._config.text("nbs_tab.mass_download_template_button"),
+            fg_color="transparent", border_width=1, border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"), hover_color=self._colors.get("window_bg"),
+            command=self._on_mass_download_template_clicked, width=140,
+        )
+        self._mass_download_button.grid(row=0, column=1, sticky="e", padx=(12, 0))
+        self._mass_load_csv_button = ctk.CTkButton(
+            csv_row, text=self._config.text("nbs_tab.mass_load_csv_button"),
+            command=self._on_mass_load_csv_clicked, width=90,
+        )
+        self._mass_load_csv_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
+
+        priority_help = ctk.CTkLabel(
+            card, text=self._config.text("nbs_tab.mass_priority_help"),
+            text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
+        )
+        priority_help.grid(row=4, column=0, sticky="ew", padx=16, pady=(12, 0))
+        bind_responsive_wraplength(priority_help)
+
+        priority_row = ctk.CTkFrame(card, fg_color="transparent")
+        priority_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(4, 4))
+        priority_row.columnconfigure(1, weight=1)
+        priority_row.columnconfigure(3, weight=1)
+        ctk.CTkLabel(
+            priority_row, text=self._config.text("nbs_tab.area_slope_priority_label"),
+            text_color=self._colors.get("text_secondary"),
+        ).grid(row=0, column=0, sticky="w")
+        self._mass_slope_entry = ctk.CTkEntry(priority_row)
+        self._mass_slope_entry.grid(row=0, column=1, sticky="ew", padx=(8, 16))
+        ctk.CTkLabel(
+            priority_row, text=self._config.text("nbs_tab.area_soil_priority_label"),
+            text_color=self._colors.get("text_secondary"),
+        ).grid(row=0, column=2, sticky="w")
+        self._mass_soil_entry = ctk.CTkEntry(priority_row)
+        self._mass_soil_entry.grid(row=0, column=3, sticky="ew", padx=(8, 0))
+
+        controls = ctk.CTkFrame(card, fg_color="transparent")
+        controls.grid(row=6, column=0, sticky="ew", padx=16, pady=(12, 8))
+        controls.columnconfigure(0, weight=1)
+        self._mass_status_label = ctk.CTkLabel(
+            controls, text="", text_color=self._colors.get("text_secondary"), anchor="w", justify="left"
+        )
+        self._mass_status_label.grid(row=0, column=0, sticky="w")
+        bind_responsive_wraplength(self._mass_status_label)
+        self._mass_preview_button = ctk.CTkButton(
+            controls, text=self._config.text("nbs_tab.area_preview_button"),
+            fg_color="transparent", border_width=1, border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"), hover_color=self._colors.get("window_bg"),
+            command=self._on_mass_preview_clicked, width=90, state="disabled",
+        )
+        self._mass_preview_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self._mass_apply_button = ctk.CTkButton(
+            controls, text=self._config.text("nbs_tab.mass_apply_button"), command=self._on_mass_apply_clicked,
+            state="disabled",
+        )
+        self._mass_apply_button.grid(row=0, column=2, sticky="e")
+
+        log_frame = ctk.CTkFrame(card, fg_color=self._colors.get("surface"))
+        log_frame.grid(row=7, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        card.rowconfigure(7, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+        self._mass_log = ctk.CTkTextbox(log_frame, wrap="word", state="disabled", height=140)
+        self._mass_log.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
     # -- estado del proyecto ----------------------------------------------------
 
     def set_project(self, project_dir: Path) -> None:
         self._project_dir = project_dir
         self._targets = []
         self._area_source_rows = []
+        self._mass_allocations = {}
         self._enabled_state.pack(fill="both", expand=True)
         self._disabled_state.pack_forget()
 
@@ -446,6 +554,13 @@ class NbSTab(ctk.CTkFrame):
         self._area_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
         self._set_area_log("")
         self._refresh_area_rows_tree()
+
+        self._mass_csv_field.set_value(self._config.text("nbs_tab.mass_csv_not_loaded"))
+        self._mass_slope_entry.delete(0, "end")
+        self._mass_soil_entry.delete(0, "end")
+        self._mass_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
+        self._set_mass_log("")
+        self._update_mass_apply_button_state()
 
         self._refresh_library()
 
@@ -475,12 +590,15 @@ class NbSTab(ctk.CTkFrame):
 
         self._nbs_selector.configure(values=[d.name for d in self._library])
         self._area_nbs_selector.configure(values=[d.name for d in self._library])
+        self._mass_nbs_selector.configure(values=[d.name for d in self._library])
         if self._library:
             self._nbs_selector.current(0)
             self._area_nbs_selector.current(0)
+            self._mass_nbs_selector.current(0)
         else:
             self._nbs_selector.set("")
             self._area_nbs_selector.set("")
+            self._mass_nbs_selector.set("")
         self._delete_button.configure(state="disabled")
         self._edit_button.configure(state="disabled")
 
@@ -591,6 +709,8 @@ class NbSTab(ctk.CTkFrame):
         self._apply_button.configure(state="disabled")
         self._area_preview_button.configure(state="disabled")
         self._area_apply_button.configure(state="disabled")
+        self._mass_preview_button.configure(state="disabled")
+        self._mass_apply_button.configure(state="disabled")
         self._apply_status_label.configure(
             text=self._config.text("nbs_tab.applying"), text_color=self._colors.get("text_secondary")
         )
@@ -640,6 +760,8 @@ class NbSTab(ctk.CTkFrame):
         self._apply_button.configure(state="normal")
         self._area_preview_button.configure(state="normal")
         self._update_area_apply_button_state()
+        self._mass_preview_button.configure(state="normal")
+        self._update_mass_apply_button_state()
         self._on_run_state_changed(False)
 
     def _set_apply_log(self, text: str) -> None:
@@ -904,6 +1026,8 @@ class NbSTab(ctk.CTkFrame):
         self._apply_button.configure(state="disabled")
         self._area_preview_button.configure(state="disabled")
         self._area_apply_button.configure(state="disabled")
+        self._mass_preview_button.configure(state="disabled")
+        self._mass_apply_button.configure(state="disabled")
         self._area_status_label.configure(
             text=self._config.text("nbs_tab.area_applying"), text_color=self._colors.get("text_secondary")
         )
@@ -946,6 +1070,8 @@ class NbSTab(ctk.CTkFrame):
         self._apply_button.configure(state="normal")
         self._area_preview_button.configure(state="normal")
         self._update_area_apply_button_state()
+        self._mass_preview_button.configure(state="normal")
+        self._update_mass_apply_button_state()
         self._on_run_state_changed(False)
 
     def _set_area_log(self, text: str) -> None:
@@ -953,3 +1079,243 @@ class NbSTab(ctk.CTkFrame):
         self._area_log.delete("1.0", "end")
         self._area_log.insert("1.0", text)
         self._area_log.configure(state="disabled")
+
+    # -- aplicar NbS por área masiva (todas las subcuencas, hilo de fondo) ----------
+
+    def _on_mass_download_template_clicked(self) -> None:
+        if self._project_dir is None:
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="nbs_mass_apply_template.csv",
+        )
+        if not path:
+            return
+
+        project_dir = self._project_dir
+        destination = Path(path)
+
+        self._set_mass_controls_enabled(False)
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_generating_template"), text_color=self._colors.get("text_secondary")
+        )
+        self._on_run_state_changed(True)
+
+        def work(_report_progress):
+            return write_mass_allocation_template_csv(project_dir / "TxtInOut", destination)
+
+        def on_done(result_path: Path) -> None:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.mass_template_success").format(path=str(result_path)),
+                text_color=self._colors.get("success"),
+            )
+            self._finish_mass_operation()
+
+        def on_error(error: Exception) -> None:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+            self._finish_mass_operation()
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
+
+    def _finish_mass_operation(self) -> None:
+        self._set_mass_controls_enabled(True)
+        self._on_run_state_changed(False)
+
+    def _set_mass_controls_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        self._mass_download_button.configure(state=state)
+        self._mass_load_csv_button.configure(state=state)
+        if enabled:
+            self._update_mass_apply_button_state()
+        else:
+            self._mass_preview_button.configure(state="disabled")
+            self._mass_apply_button.configure(state="disabled")
+
+    def _on_mass_load_csv_clicked(self) -> None:
+        path = filedialog.askopenfilename(filetypes=[("CSV", "*.csv")])
+        if not path:
+            return
+
+        try:
+            allocations, errors = parse_mass_allocation_csv(Path(path))
+        except ValueError as error:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+            return
+
+        self._mass_allocations = allocations
+        self._mass_csv_field.set_value(path)
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_load_csv_success").format(count=len(allocations)),
+            text_color=self._colors.get("success") if not errors else self._colors.get("warning"),
+        )
+        self._set_mass_log(
+            "\n".join(self._config.text("nbs_tab.mass_load_csv_error_line").format(error=e) for e in errors)
+        )
+        self._update_mass_apply_button_state()
+
+    def _update_mass_apply_button_state(self) -> None:
+        has_allocations = bool(self._mass_allocations)
+        self._mass_preview_button.configure(state="normal" if has_allocations else "disabled")
+        self._mass_apply_button.configure(state="normal" if has_allocations else "disabled")
+
+    def _run_mass_plan(self, on_ready: Callable[[NbSDefinition, MassAreaAllocationResult], None]) -> None:
+        """Mismo motivo que _run_area_plan para correr en hilo de fondo:
+        plan_mass_area_allocation llama load_subbasin_hru_files por cada
+        subcuenca del CSV, y con un modelo real eso puede tardar lo
+        suficiente como para congelar la ventana si corriera en el hilo de
+        UI."""
+        if self._project_dir is None or not self._mass_allocations:
+            return
+
+        name = self._mass_nbs_selector.get()
+        # Mismo criterio que Apply manual/por área: releído de disco, no self._library.
+        definition = next((d for d in load_library(self._project_dir) if d.name == name), None)
+        if definition is None:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.no_nbs_selected_error"), text_color=self._colors.get("error")
+            )
+            return
+
+        project_dir = self._project_dir
+        allocations = dict(self._mass_allocations)
+        slope_priority = parse_priority_text(self._mass_slope_entry.get())
+        soil_priority = parse_priority_text(self._mass_soil_entry.get())
+
+        self._mass_preview_button.configure(state="disabled")
+        self._mass_apply_button.configure(state="disabled")
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_computing_plan"), text_color=self._colors.get("text_secondary")
+        )
+
+        def work(_report_progress):
+            return plan_mass_area_allocation(
+                project_dir, allocations, slope_priority=slope_priority, soil_priority=soil_priority
+            )
+
+        def on_done(result: MassAreaAllocationResult) -> None:
+            self._update_mass_apply_button_state()
+            self._mass_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
+            on_ready(definition, result)
+
+        def on_error(error: Exception) -> None:
+            self._update_mass_apply_button_state()
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
+
+    def _render_mass_plan_preview(self, result: MassAreaAllocationResult) -> None:
+        lines: list[str] = []
+        for plan in result.plans:
+            lines.append(
+                self._config.text("nbs_tab.area_preview_header").format(
+                    subbasin=plan.subbasin, area=plan.total_area_ha, sub_area=plan.subbasin_area_ha
+                )
+            )
+            for source_result in plan.by_source:
+                lines.append(
+                    self._config.text("nbs_tab.area_preview_line").format(
+                        coverage=source_result.source_lulc, requested=source_result.requested_ha,
+                        selected=source_result.selected_ha, count=len(source_result.selected_hru_ids),
+                        hru_ids=source_result.selected_hru_ids,
+                    )
+                )
+                if source_result.status == "no_source_hru":
+                    lines.append(self._config.text("nbs_tab.area_preview_no_source_line"))
+                elif source_result.deficit_ha > 0:
+                    lines.append(
+                        self._config.text("nbs_tab.area_preview_deficit_line").format(deficit=source_result.deficit_ha)
+                    )
+        for subbasin_id, reason in result.skipped.items():
+            lines.append(self._config.text("nbs_tab.mass_skipped_line").format(subbasin=subbasin_id, reason=reason))
+        self._set_mass_log("\n".join(lines) if lines else self._config.text("nbs_tab.mass_no_targets_error"))
+
+    def _on_mass_preview_clicked(self) -> None:
+        self._run_mass_plan(self._render_mass_plan_preview_ready)
+
+    def _render_mass_plan_preview_ready(self, _definition: NbSDefinition, result: MassAreaAllocationResult) -> None:
+        self._render_mass_plan_preview(result)
+
+    def _on_mass_apply_clicked(self) -> None:
+        self._run_mass_plan(self._confirm_mass_apply)
+
+    def _confirm_mass_apply(self, definition: NbSDefinition, result: MassAreaAllocationResult) -> None:
+        targets = result.targets
+        if not targets:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.mass_no_targets_error"), text_color=self._colors.get("error")
+            )
+            return
+
+        self._render_mass_plan_preview(result)
+        message = self._config.text("nbs_tab.mass_confirm_apply").format(
+            name=definition.name, count=len(targets), subbasins=len(result.plans)
+        )
+        ConfirmDialog(self, self._config, message=message, on_confirm=lambda: self._start_mass_apply(definition, targets))
+
+    def _start_mass_apply(self, definition: NbSDefinition, targets: list[tuple[int, int]]) -> None:
+        project_dir = self._project_dir
+
+        self._apply_button.configure(state="disabled")
+        self._area_preview_button.configure(state="disabled")
+        self._area_apply_button.configure(state="disabled")
+        self._mass_preview_button.configure(state="disabled")
+        self._mass_apply_button.configure(state="disabled")
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_applying"), text_color=self._colors.get("text_secondary")
+        )
+        self._on_run_state_changed(True)
+
+        def work(_report_progress):
+            return apply_nbs(project_dir, definition, targets)
+
+        run_in_background(
+            self, work, on_progress=lambda _m: None, on_done=self._on_mass_apply_done, on_error=self._on_mass_apply_error
+        )
+
+    def _on_mass_apply_done(self, report: NbSApplyReport) -> None:
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.area_apply_summary").format(
+                applied=report.applied_count, total=len(report.results), plant_id=report.plant_id, cpnm=report.cpnm
+            ),
+            text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
+        )
+        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=self._write_apply_report(report))]
+        for result in report.results:
+            if result.status == "applied":
+                lines.append(self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru))
+            else:
+                lines.append(
+                    self._config.text("nbs_tab.log_line_error").format(
+                        subbasin=result.subbasin, hru=result.hru, error=result.message
+                    )
+                )
+        self._set_mass_log("\n".join(lines))
+        self._finish_mass_apply()
+
+    def _on_mass_apply_error(self, error: Exception) -> None:
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.apply_error").format(error=str(error)), text_color=self._colors.get("error")
+        )
+        self._finish_mass_apply()
+
+    def _finish_mass_apply(self) -> None:
+        self._apply_button.configure(state="normal")
+        self._area_preview_button.configure(state="normal")
+        self._update_area_apply_button_state()
+        self._mass_preview_button.configure(state="normal")
+        self._update_mass_apply_button_state()
+        self._on_run_state_changed(False)
+
+    def _set_mass_log(self, text: str) -> None:
+        self._mass_log.configure(state="normal")
+        self._mass_log.delete("1.0", "end")
+        self._mass_log.insert("1.0", text)
+        self._mass_log.configure(state="disabled")
