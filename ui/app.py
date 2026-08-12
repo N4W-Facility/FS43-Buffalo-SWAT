@@ -17,6 +17,7 @@ from .tab_nbs import NbSTab
 from .tab_project import ProjectTab
 from .tab_results import ResultsTab
 from .tab_run import RunTab
+from .tab_sub_results import SubResultsTab
 from .tab_summary import SummaryTab
 from .tab_wetlands import WetlandsTab
 from .tabs import TabBar
@@ -50,6 +51,9 @@ class App(ctk.CTk):
         self._results_tab = ResultsTab(
             self._tab_bar, config, on_run_state_changed=self._on_results_tab_run_state_changed
         )
+        self._sub_results_tab = SubResultsTab(
+            self._tab_bar, config, on_run_state_changed=self._on_sub_results_tab_run_state_changed
+        )
         self._hru_results_tab = HruResultsTab(
             self._tab_bar, config, on_run_state_changed=self._on_hru_results_tab_run_state_changed
         )
@@ -62,6 +66,7 @@ class App(ctk.CTk):
         self._tab_bar.add_tab("hru", "tab.hru", self._hru_tab, enabled=False)
         self._tab_bar.add_tab("run", "tab.run", self._run_tab, enabled=False)
         self._tab_bar.add_tab("results", "tab.results", self._results_tab, enabled=False)
+        self._tab_bar.add_tab("sub_results", "tab.sub_results", self._sub_results_tab, enabled=False)
         self._tab_bar.add_tab("hru_results", "tab.hru_results", self._hru_results_tab, enabled=False)
         self._tab_bar.add_tab("batch", "tab.batch", self._batch_tab, enabled=False)
         self._tab_bar.add_tab("nbs", "tab.nbs", self._nbs_tab, enabled=False)
@@ -77,6 +82,8 @@ class App(ctk.CTk):
         self._run_tab.set_project(project_dir)
         self._tab_bar.set_enabled("results", True)
         self._results_tab.set_project(project_dir, metadata)
+        self._tab_bar.set_enabled("sub_results", True)
+        self._sub_results_tab.set_project(project_dir, metadata)
         self._tab_bar.set_enabled("hru_results", True)
         self._hru_results_tab.set_project(project_dir)
         self._tab_bar.set_enabled("batch", True)
@@ -110,6 +117,14 @@ class App(ctk.CTk):
     def _on_results_tab_run_state_changed(self, running: bool) -> None:
         """Mismo bloqueo que las demás operaciones de fondo, mientras
         ResultsTab parsea output.rch entero en Organize: cambiar de
+        proyecto a mitad de esa lectura dejaría el hilo de fondo operando
+        sobre un project_dir que la UI ya no considera activo."""
+        self._tab_bar.set_navigation_locked(running)
+        self._project_tab.set_locked(running)
+
+    def _on_sub_results_tab_run_state_changed(self, running: bool) -> None:
+        """Mismo bloqueo que las demás operaciones de fondo, mientras
+        SubResultsTab parsea output.sub entero en Organize: cambiar de
         proyecto a mitad de esa lectura dejaría el hilo de fondo operando
         sobre un project_dir que la UI ya no considera activo."""
         self._tab_bar.set_navigation_locked(running)

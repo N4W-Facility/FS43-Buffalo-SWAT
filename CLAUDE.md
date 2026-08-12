@@ -50,8 +50,8 @@ vez de CSV — ver esa pestaña más abajo.
   pestañas deshabilitadas hasta que haya un proyecto abierto. La barra en
   sí es una `CTkScrollableFrame` horizontal (no un `CTkFrame` con
   `pack(side="left")` plano): desde seis pestañas el ancho requerido por
-  los botones ya no entra en una ventana de pantalla chica (ahora ocho,
-  con HRU Results y Batch Scenarios), y sin scroll las
+  los botones ya no entra en una ventana de pantalla chica (ahora diez,
+  con Results (.sub), HRU Results, Batch Scenarios y NbS), y sin scroll las
   últimas pestañas quedaban fuera del área visible sin forma de
   alcanzarlas (bug real, detectado 2026-08-03 al agregar la pestaña
   Results — ver más abajo). `_WINDOW_SIZE` en `ui/app.py` sigue en
@@ -304,6 +304,34 @@ vez de CSV — ver esa pestaña más abajo.
   `REACH_ID_FIELD` en `shapefile_reader.py`. La geometría se lee una sola
   vez por `set_project` (no en cada cambio de selector) y se cachea en
   memoria; solo el resaltado cambia al redibujar.
+- **Pestaña Results (`output.sub`)** (`ui/tab_sub_results.py` +
+  `swat_io/sub_output_parser.py`, 2026-08-11): misma estructura que
+  Results/.rch de arriba (selector + variable, gráfica, mapa, "Organize"
+  en hilo de fondo sin confirmación porque no toca `TxtInOut`, caché de
+  CSVs en `tool_outputs/sub_timeseries/`), pero para el balance por
+  subcuenca de `output.sub` en vez de caudal por reach. El mapa solo
+  necesita el shapefile de subcuencas (no hay noción de reach en este
+  archivo) — `viz/shapefile_map.build_shapefile_map_figure` se reutiliza
+  tal cual pasándole una lista de reach vacía.
+
+  **`output.sub` NO es como `output.rch`** (separado por espacios de forma
+  confiable) — tiene el mismo problema estructural que `output.hru`
+  (ancho fijo), pero con una variante propia no documentada hasta ahora:
+  el campo `MON` se imprime **siempre pegado sin separador** al campo
+  `AREA` que le sigue, para cualquier cantidad de dígitos de `MON`
+  (incluido un solo dígito, ej. `"1.31340E+00"` en vez de
+  `"1 0.31340E+00"`) — no es un caso de desborde ocasional como en
+  `output.hru`, es así en el 100% de las filas. Encontrado al notar que
+  el valor que debía ser el área constante de una subcuenca cambiaba fila
+  a fila; confirmado verificando que, para cada subcuenca, los últimos 10
+  caracteres del campo combinado son idénticos en todas sus filas
+  (`AREA`), mientras que el prefijo variable coincide exactamente con la
+  secuencia esperada de día/mes/año. `swat_io/sub_output_parser.py` usa
+  slicing de ancho fijo para ese campo (`SUB_VARIABLE_COLUMNS`, offsets
+  derivados y validados programáticamente contra los 32 `output.sub`
+  reales del workspace, ~102 mil filas combinadas, 0 errores de parseo —
+  mismo rigor que `output.hru`); los 24 campos de variable restantes SÍ
+  están separados por espacios de forma confiable en ese mismo dataset.
 - **Pestaña HRU Results (`output.hru`)** (`ui/tab_hru_results.py` +
   `swat_io/hru_output_parser.py`): séptima pestaña, cubre el paso 3 del
   resumen del proyecto para `output.hru` (balance por HRU) — pedido
@@ -777,7 +805,7 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 | `.bsn` | Parámetros globales de cuenca. Fuera de alcance: nunca se modifica por escenario. |
 | `.fig` / `.cio` | Topología del watershed y control maestro de la corrida (fechas, opciones de impresión). Se mantienen intactos entre escenarios salvo que el usuario cambie explícitamente el periodo simulado. |
 | `output.rch` | Caudal y carga por tramo de río. Salida principal para comparación de caudal. Organizada en serie de tiempo por reach (CSV + gráfica + mapa) desde la pestaña Results — ver "Estado actual". |
-| `output.sub` | Balance por subcuenca. |
+| `output.sub` | Balance por subcuenca. Organizado en serie de tiempo por subcuenca (CSV + gráfica + mapa) desde la pestaña Results (.sub) — ver "Estado actual". |
 | `output.hru` | Balance por unidad de respuesta hidrológica. Organizado en base SQLite (no CSV, ver pestaña HRU Results) y explorado por subcuenca/HRU/variable (gráfica + export CSV) desde la pestaña HRU Results — ver "Estado actual". |
 | `output.mgt` | Operaciones de manejo por HRU; se lee como texto plano junto con las demás salidas. |
 | `output.std` | Resumen general de la corrida. |

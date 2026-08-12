@@ -1,0 +1,428 @@
+"""Pestaña Results (output.sub): organiza la salida de balance por
+subcuenca en CSV legibles (uno por subcuenca, una fila por fecha -- estilo
+serie de tiempo), y permite explorarla con un selector de subcuenca +
+variable (gráfica) y un mapa estático que resalta la subcuenca
+seleccionada. Estructura idéntica a ui/tab_results.py (output.rch), con
+las siguientes diferencias por ser output.sub un archivo distinto:
+
+- El parseo (swat_io.sub_output_parser) es de ancho fijo, no separado por
+  espacios de forma confiable como .rch -- ver ese módulo para el motivo
+  (MON se pega sin separador al campo AREA que le sigue). La UI no
+  necesita saber esto: consume el mismo tipo de DataFrame con columna
+  "date" que .rch.
+- El mapa solo necesita el shapefile de subcuencas (no el de reach, ya que
+  output.sub no tiene noción de tramo de río) -- a diferencia de
+  ResultsTab, que requiere ambos shapefiles configurados en Project antes
+  de dibujar nada. viz.shapefile_map.build_shapefile_map_figure ya acepta
+  una lista de reach_shapes vacía sin problema (simplemente no dibuja
+  ninguna línea), así que se reutiliza tal cual en vez de crear una
+  función de mapa nueva.
+
+"Organize .sub" corre en hilo de fondo (ui.tasks.run_in_background, como
+toda operación que parsea un modelo real -- CLAUDE.md) y no toca ningún
+archivo de TxtInOut, así que no pide confirmación -- mismo criterio que
+Organize .rch. Al reabrir el proyecto, si tool_outputs/sub_timeseries/ ya
+tiene CSVs de una corrida anterior, se releen directo sin volver a
+parsear output.sub -- mismo patrón de caché que ResultsTab.
+
+Deshabilitada (vía TabBar.set_enabled) hasta que haya un proyecto abierto
+-- igual que ResultsTab, queda habilitada incluso si output.sub todavía
+no existe (el botón "Organize .sub" queda deshabilitado con un hint en
+vez de bloquear toda la pestaña).
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from tkinter import ttk
+from typing import Callable
+
+import customtkinter as ctk
+import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+from config.settings import ConfigManager
+from scenarios.project import ProjectMetadata
+from swat_io.cio_parser import CioParseError, parse_run_settings
+from swat_io.sub_output_parser import (
+    SUB_VARIABLE_COLUMNS,
+    build_sub_timeseries,
+    export_sub_timeseries_csvs,
+    parse_sub_file,
+    read_sub_timeseries_dir,
+    sub_timeseries_dir,
+)
+from viz.rch_chart import build_rch_timeseries_figure
+from viz.shapefile_map import build_shapefile_map_figure
+from viz.shapefile_reader import ShapefileReadError, read_subbasin_shapes
+
+from .tasks import run_in_background
+from .widgets import palette, style_combobox
+
+_DEFAULT_VARIABLE = "WYLD"
+
+
+class SubResultsTab(ctk.CTkFrame):
+    def __init__(
+        self,
+        master: ctk.CTkBaseClass,
+        config: ConfigManager,
+        *,
+        on_run_state_changed: Callable[[bool], None] = lambda running: None,
+        **kwargs,
+    ) -> None:
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self._config = config
+        self._colors = palette(config)
+        self._on_run_state_changed = on_run_state_changed
+
+        self._project_dir: Path | None = None
+        self._metadata: ProjectMetadata = ProjectMetadata()
+        self._timeseries: pd.DataFrame = pd.DataFrame()
+
+        self._variable_code_to_label = {code: self._config.text(f"sub_var.{code}") for code in SUB_VARIABLE_COLUMNS}
+        self._variable_label_to_code = {label: code for code, label in self._variable_code_to_label.items()}
+
+        self._subbasin_shapes: list | None = None
+        self._map_error: str | None = None
+
+        self._chart_canvas: FigureCanvasTkAgg | None = None
+        self._map_canvas: FigureCanvasTkAgg | None = None
+
+        self._disabled_state = self._build_disabled_state()
+        self._enabled_state = self._build_enabled_state()
+        self._disabled_state.pack(fill="both", expand=True)
+
+    # -- construcción -----------------------------------------------------
+
+    def _build_disabled_state(self) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        hint = ctk.CTkLabel(
+            frame, text=self._config.text("summary.disabled_hint"), text_color=self._colors.get("text_secondary")
+        )
+        hint.place(relx=0.5, rely=0.4, anchor="center")
+        return frame
+
+    def _build_enabled_state(self) -> ctk.CTkFrame:
+        frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        frame.columnconfigure(0, weight=1)
+
+        header = ctk.CTkFrame(frame, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.columnconfigure(0, weight=1)
+
+        title = ctk.CTkLabel(
+            header,
+            text=self._config.text("sub_results_tab.title"),
+            text_color=self._colors.get("accent"),
+            font=ctk.CTkFont(size=18, weight="bold"),
+            anchor="w",
+        )
+        title.grid(row=0, column=0, sticky="w")
+
+        self._open_folder_button = ctk.CTkButton(
+            header,
+            text=self._config.text("summary.open_output_folder"),
+            fg_color="transparent",
+            border_width=1,
+            border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"),
+            hover_color=self._colors.get("window_bg"),
+            command=self._on_open_folder_clicked,
+        )
+        self._open_folder_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
+
+        self._organize_button = ctk.CTkButton(
+            header,
+            text=self._config.text("sub_results_tab.organize_button"),
+            command=self._on_organize_clicked,
+            state="disabled",
+        )
+        self._organize_button.grid(row=0, column=2, sticky="e")
+
+        self._status_label = ctk.CTkLabel(
+            frame, text="", anchor="w", justify="left", wraplength=880, text_color=self._colors.get("text_secondary")
+        )
+        self._status_label.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+
+        separator = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
+        separator.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+
+        selectors = ctk.CTkFrame(frame, fg_color="transparent")
+        selectors.grid(row=3, column=0, sticky="w")
+
+        subbasin_label = ctk.CTkLabel(
+            selectors,
+            text=self._config.text("sub_results_tab.subbasin_label").upper(),
+            text_color=self._colors.get("text_secondary"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        subbasin_label.grid(row=0, column=0, sticky="w")
+        self._subbasin_selector = ttk.Combobox(
+            selectors, style=style_combobox(self._config), state="readonly", values=[], width=8
+        )
+        self._subbasin_selector.grid(row=1, column=0, sticky="w", padx=(0, 16))
+        self._subbasin_selector.bind("<<ComboboxSelected>>", self._on_selection_changed)
+
+        variable_label = ctk.CTkLabel(
+            selectors,
+            text=self._config.text("sub_results_tab.variable_label").upper(),
+            text_color=self._colors.get("text_secondary"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+        )
+        variable_label.grid(row=0, column=1, sticky="w")
+        self._variable_selector = ttk.Combobox(
+            selectors,
+            style=style_combobox(self._config),
+            state="readonly",
+            values=list(self._variable_code_to_label.values()),
+            width=48,
+        )
+        self._variable_selector.grid(row=1, column=1, sticky="w")
+        self._variable_selector.bind("<<ComboboxSelected>>", self._on_selection_changed)
+
+        body = ctk.CTkFrame(frame, fg_color="transparent")
+        body.grid(row=4, column=0, sticky="ew", pady=(16, 0))
+        body.columnconfigure(0, weight=1)
+
+        chart_card = ctk.CTkFrame(body, fg_color="transparent")
+        chart_card.grid(row=0, column=0, sticky="new")
+
+        self._chart_empty_label = ctk.CTkLabel(
+            chart_card, text=self._config.text("sub_results_tab.chart_empty_hint"), text_color=self._colors.get("text_secondary"), anchor="w"
+        )
+        self._chart_empty_label.pack(anchor="w")
+
+        self._chart_canvas_frame = ctk.CTkFrame(chart_card, fg_color=self._colors.get("surface"))
+
+        map_card = ctk.CTkFrame(body)
+        map_card.grid(row=0, column=1, sticky="n", padx=(16, 0))
+
+        map_title = ctk.CTkLabel(
+            map_card,
+            text=self._config.text("sub_results_tab.map_title"),
+            text_color=self._colors.get("text_primary"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        map_title.pack(anchor="w", padx=12, pady=(12, 4))
+
+        self._map_hint_label = ctk.CTkLabel(
+            map_card,
+            text=self._config.text("sub_results_tab.map_missing_hint"),
+            text_color=self._colors.get("text_secondary"),
+            wraplength=220,
+            justify="left",
+        )
+        self._map_hint_label.pack(anchor="w", padx=12, pady=(0, 12))
+
+        self._map_canvas_frame = ctk.CTkFrame(map_card, fg_color=self._colors.get("surface"))
+
+        return frame
+
+    # -- estado del proyecto -----------------------------------------------
+
+    def set_project(self, project_dir: Path, metadata: ProjectMetadata) -> None:
+        self._project_dir = project_dir
+        self._metadata = metadata
+        self._enabled_state.pack(fill="both", expand=True)
+        self._disabled_state.pack_forget()
+
+        self._refresh_organize_availability()
+
+        cached = read_sub_timeseries_dir(sub_timeseries_dir(project_dir))
+        self._timeseries = cached
+        self._refresh_selectors()
+
+        self._load_map_shapes()
+        self._refresh_map()
+
+    def _sub_path(self) -> Path:
+        return self._project_dir / "TxtInOut" / "output.sub"
+
+    def _on_open_folder_clicked(self) -> None:
+        if self._project_dir is None:
+            return
+        os.startfile(sub_timeseries_dir(self._project_dir))  # solo Windows: target de distribución del proyecto
+
+    def _refresh_organize_availability(self) -> None:
+        exists = self._sub_path().is_file()
+        self._organize_button.configure(state="normal" if exists else "disabled")
+        self._set_status("" if exists else self._config.text("sub_results_tab.no_sub_hint"))
+
+    # -- Organize .sub (hilo de fondo) --------------------------------------
+
+    def _on_organize_clicked(self) -> None:
+        if self._project_dir is None:
+            return
+
+        project_dir = self._project_dir
+        sub_path = self._sub_path()
+        cio_path = project_dir / "TxtInOut" / "file.cio"
+
+        self._set_controls_enabled(False)
+        self._set_status(self._config.text("sub_results_tab.organizing"))
+        self._on_run_state_changed(True)
+
+        def work(report_progress: Callable[[str], None]) -> dict:
+            report_progress(self._config.text("sub_results_tab.organizing"))
+            run_settings = parse_run_settings(cio_path)
+            raw = parse_sub_file(sub_path)
+            timeseries = build_sub_timeseries(raw, run_settings)
+            dest_dir = sub_timeseries_dir(project_dir)
+            written = export_sub_timeseries_csvs(timeseries, dest_dir)
+            return {"timeseries": timeseries, "written": written, "dest_dir": dest_dir}
+
+        run_in_background(
+            self,
+            work,
+            on_progress=lambda message: self._set_status(message),
+            on_done=self._on_organize_done,
+            on_error=self._on_organize_error,
+        )
+
+    def _on_organize_done(self, result: dict) -> None:
+        self._timeseries = result["timeseries"]
+        self._refresh_selectors()
+        self._set_status(
+            self._config.text("sub_results_tab.organize_success").format(
+                subbasins=len(result["written"]), path=str(result["dest_dir"])
+            )
+        )
+        self._finish_organize()
+
+    def _on_organize_error(self, error: Exception) -> None:
+        if isinstance(error, CioParseError):
+            message = self._config.text("sub_results_tab.period_error").format(error=str(error))
+        else:
+            message = self._config.text("sub_results_tab.organize_error").format(error=str(error))
+        self._set_status(message, error=True)
+        self._finish_organize()
+
+    def _finish_organize(self) -> None:
+        self._set_controls_enabled(True)
+        self._on_run_state_changed(False)
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        # No reusa _refresh_organize_availability: esa además pisa el status
+        # label con el hint de "no output.sub" -- acá el status ya lo dejó
+        # con el resultado de Organize (éxito o error), que no debe perderse
+        # al reactivar los controles.
+        can_organize = enabled and self._sub_path().is_file()
+        self._organize_button.configure(state="normal" if can_organize else "disabled")
+        self._open_folder_button.configure(state="normal" if enabled else "disabled")
+        self._subbasin_selector.configure(state="readonly" if enabled else "disabled")
+        self._variable_selector.configure(state="readonly" if enabled else "disabled")
+
+    # -- selectores + gráfica -------------------------------------------------
+
+    def _refresh_selectors(self) -> None:
+        if self._timeseries.empty:
+            self._subbasin_selector.configure(values=[])
+            self._subbasin_selector.set("")
+            self._refresh_chart()
+            return
+
+        subbasin_ids = sorted(int(s) for s in self._timeseries["sub"].unique())
+        subbasin_labels = [str(s) for s in subbasin_ids]
+        self._subbasin_selector.configure(values=subbasin_labels)
+        if self._subbasin_selector.get() not in subbasin_labels:
+            self._subbasin_selector.set(subbasin_labels[0])
+
+        if not self._variable_selector.get():
+            default_code = _DEFAULT_VARIABLE if _DEFAULT_VARIABLE in SUB_VARIABLE_COLUMNS else SUB_VARIABLE_COLUMNS[0]
+            self._variable_selector.set(self._variable_code_to_label[default_code])
+
+        self._refresh_chart()
+
+    def _on_selection_changed(self, _event=None) -> None:
+        self._refresh_chart()
+        self._refresh_map()
+
+    def _refresh_chart(self) -> None:
+        subbasin_value = self._subbasin_selector.get()
+        variable_label = self._variable_selector.get()
+
+        if self._timeseries.empty or not subbasin_value or not variable_label:
+            self._chart_canvas_frame.pack_forget()
+            self._chart_empty_label.pack(anchor="w")
+            return
+
+        self._chart_empty_label.pack_forget()
+
+        subbasin_id = int(subbasin_value)
+        variable_code = self._variable_label_to_code[variable_label]
+        subset = self._timeseries[self._timeseries["sub"] == subbasin_id].sort_values("date")
+        series = subset.set_index("date")[variable_code]
+
+        figure = build_rch_timeseries_figure(
+            series,
+            line_color=self._colors.get("accent"),
+            grid_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"),
+            muted_color=self._colors.get("text_secondary"),
+            y_axis_label=variable_label,
+            title=self._config.text("sub_results_tab.chart_title").format(sub=subbasin_id, variable=variable_label),
+        )
+
+        if self._chart_canvas is not None:
+            self._chart_canvas.get_tk_widget().destroy()
+        self._chart_canvas = FigureCanvasTkAgg(figure, master=self._chart_canvas_frame)
+        self._chart_canvas.draw()
+        self._chart_canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
+        self._chart_canvas_frame.pack(fill="x")
+
+    # -- mapa estático (viz.shapefile_map) ------------------------------------
+
+    def _load_map_shapes(self) -> None:
+        self._subbasin_shapes = None
+        self._map_error = None
+
+        if not self._metadata.subbasin_shp_path:
+            return
+
+        try:
+            self._subbasin_shapes = read_subbasin_shapes(self._metadata.subbasin_shp_path)
+        except (ShapefileReadError, OSError) as error:
+            self._map_error = str(error)
+
+    def _refresh_map(self) -> None:
+        if self._map_error is not None:
+            self._show_map_hint(self._config.text("sub_results_tab.map_error").format(error=self._map_error))
+            return
+        if self._subbasin_shapes is None:
+            self._show_map_hint(self._config.text("sub_results_tab.map_missing_hint"))
+            return
+
+        subbasin_value = self._subbasin_selector.get()
+        highlighted_id = int(subbasin_value) if subbasin_value else None
+
+        figure = build_shapefile_map_figure(
+            self._subbasin_shapes,
+            [],
+            highlighted_id,
+            fill_color=self._colors.get("surface"),
+            highlight_fill_color=self._colors.get("accent"),
+            border_color=self._colors.get("border"),
+            reach_color=self._colors.get("text_secondary"),
+            highlight_reach_color=self._colors.get("error"),
+            background_color="#FFFFFF",
+        )
+
+        self._map_hint_label.pack_forget()
+        if self._map_canvas is not None:
+            self._map_canvas.get_tk_widget().destroy()
+        self._map_canvas = FigureCanvasTkAgg(figure, master=self._map_canvas_frame)
+        self._map_canvas.draw()
+        self._map_canvas.get_tk_widget().pack(padx=8, pady=8)
+        self._map_canvas_frame.pack(padx=12, pady=(0, 12))
+
+    def _show_map_hint(self, text: str) -> None:
+        self._map_canvas_frame.pack_forget()
+        self._map_hint_label.configure(text=text)
+        self._map_hint_label.pack(anchor="w", padx=12, pady=(0, 12))
+
+    # -- status ---------------------------------------------------------------
+
+    def _set_status(self, text: str, *, error: bool = False) -> None:
+        color_key = "error" if error else "text_secondary"
+        self._status_label.configure(text=text, text_color=self._colors.get(color_key))
