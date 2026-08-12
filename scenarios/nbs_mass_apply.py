@@ -199,16 +199,28 @@ def plan_mass_area_allocation(
     *,
     slope_priority: list[str] | None = None,
     soil_priority: list[str] | None = None,
+    strict: bool = True,
 ) -> MassAreaAllocationResult:
     """Corre plan_area_allocation por cada subcuenca de ``allocations``, sin
     ningún cambio al algoritmo de selección de HRU -- ver docstring del
-    módulo. Una subcuenca sin .sub localizable, sin ninguna HRU, o cuyas
+    módulo. Una subcuenca sin .sub localizable o sin ninguna HRU siempre se
+    omite (``result.skipped``) en vez de abortar el resto del batch.
+
+    ``strict`` (default True, el comportamiento de siempre para "Apply by
+    area (all subbasins)") además omite la subcuenca entera cuando sus
     coberturas fuente asignadas no alcanzan para cubrir el ``area_ha``
-    pedido se omite (``result.skipped``) en vez de abortar el resto del
-    batch -- este último caso usa el déficit que ya calcula
-    plan_area_allocation por cobertura, no una comparación contra el área
-    total de la subcuenca, para poder decirle al usuario exactamente
-    cuánta área SÍ es alcanzable con lo que asignó."""
+    pedido -- usa el déficit que ya calcula plan_area_allocation por
+    cobertura, no una comparación contra el área total de la subcuenca,
+    para poder decirle al usuario exactamente cuánta área SÍ es alcanzable
+    con lo que asignó.
+
+    ``strict=False`` (pedido explícito del usuario, 2026-08-12, para la
+    serie de % de engine.nbs_area_batch_run) mantiene el plan en
+    ``result.plans`` aunque tenga déficit -- aplica lo alcanzable en vez de
+    omitir la subcuenca entera, porque en un batch automático el usuario
+    prefiere que cada paso corra con lo que se pueda en vez de bloquearse;
+    el llamador es responsable de revisar ``AreaAllocationPlan.total_deficit_ha``
+    de cada plan y dejarlo documentado (log/reporte)."""
     txtinout_dir = Path(project_dir) / "TxtInOut"
     sub_by_id = {s.subbasin_id: s for s in discover_subbasins(txtinout_dir)}
 
@@ -233,7 +245,7 @@ def plan_mass_area_allocation(
             soil_priority=soil_priority,
         )
 
-        if plan.total_deficit_ha > _AREA_DEFICIT_TOLERANCE:
+        if strict and plan.total_deficit_ha > _AREA_DEFICIT_TOLERANCE:
             achievable_ha = sum(source.selected_ha for source in plan.by_source)
             breakdown = "; ".join(
                 f"{source.source_lulc}: {source.selected_ha:.2f} ha disponibles" for source in plan.by_source

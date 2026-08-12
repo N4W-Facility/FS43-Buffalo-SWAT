@@ -582,6 +582,89 @@ vez de CSV — ver esa pestaña más abajo.
   `py_compile` ni por tests que solo verifican lógica pura sin construir
   widgets.
 
+  **NbS area batch (percentage series)** (`scenarios/nbs_area_batch.py` +
+  `engine/nbs_area_batch_run.py`, tarjeta nueva al final de la misma
+  pestaña Batch, 2026-08-12): pedido explícito del usuario — quería el
+  mismo patrón de serie incremental que ya tiene esta pestaña para cambio
+  de cobertura simple (10%, 20%, 30%, ... hasta 100%, una corrida real de
+  SWAT por paso, salidas organizadas automáticamente), pero aplicando una
+  NbS completa (`scenarios.nbs_apply.apply_nbs`: plant.dat/.hru/.mgt) en
+  vez de solo reasignar `HRU_FR`. Vive en esta pestaña y no en NbS porque
+  acá ya está toda la orquestación "copiar proyecto → correr SWAT →
+  organizar salidas"; NbS sigue siendo dueña de la definición/aplicación
+  puntual de una NbS, esta tarjeta solo la referencia por nombre
+  (`scenarios.nbs.load_library`, releído de disco al correr, mismo
+  criterio que Apply/Apply by area de la pestaña NbS).
+
+  El usuario configura el área NbS "al 100%" con el mismo CSV matriz que
+  ya usa "Apply an NbS by area (all subbasins)" (`subbasin, area_ha,
+  <coberturas>...`, `scenarios.nbs_mass_apply.parse_mass_allocation_csv` y
+  `write_mass_allocation_template_csv` reutilizados tal cual, con el mismo
+  requisito de tener una NbS seleccionada antes de bajar el template). La
+  serie de porcentajes vive en un campo de texto aparte (`"10,20,30,...,100"`,
+  `scenarios.nbs_area_batch.parse_pct_series_text`, mismo separador y rango
+  (0,100] que `target_pct_series` de Batch) en vez de una columna del CSV:
+  la matriz ya tiene una forma fija (subcuenca × cobertura) sin lugar
+  natural para una lista de porcentajes. Cada paso escala `area_ha` de cada
+  subcuenca a ese % (`scale_allocations` — los % de cobertura entre sí no
+  cambian, siguen siendo % de la misma área ya escalada) y se calcula
+  siempre desde el proyecto de referencia, nunca encadenado — mismo
+  criterio que el batch de cobertura.
+
+  **Decisión de diseño clave, distinta de "Apply an NbS by area (all
+  subbasins)":** esa sección bloquea el botón Apply si hay algún déficit
+  (pedido explícito del usuario para forzar corrección antes de escribir
+  nada — ver `ui.tab_nbs._block_mass_apply_if_skipped`). Acá el usuario
+  pidió lo contrario ("aplique lo que pueda aplicar pero que me informe"):
+  cada paso de la serie aplica lo alcanzable con las coberturas asignadas y
+  corre SWAT igual, documentando el faltante en vez de bloquear —
+  `engine.nbs_area_batch_run` llama a
+  `scenarios.nbs_mass_apply.plan_mass_area_allocation` con `strict=False`
+  (parámetro nuevo en esa función, default `True` preserva el
+  comportamiento de bloqueo existente de la sección interactiva sin
+  tocarla): con `strict=False` una subcuenca con déficit igual queda en
+  `result.plans` con lo que sí se pudo seleccionar, en vez de moverse a
+  `result.skipped`. El déficit de cada paso queda documentado en dos
+  lugares: el log en tiempo real (una línea por subcuenca con déficit) y un
+  reporte CSV por paso (`scenarios.nbs_area_batch.write_area_batch_step_report_csv`,
+  en `tool_outputs/nbs_area_batch_report.csv` de esa copia de escenario —
+  una fila por subcuenca/cobertura fuente con área pedida/aplicada/déficit,
+  más una fila por subcuenca omitida por motivo estructural — sin `.sub` o
+  sin ninguna HRU, eso sí sigue sin aplicarse nunca). El reporte por HRU de
+  siempre (`scenarios.nbs_apply.write_apply_report_csv`) también se escribe
+  en cada paso, igual que cualquier otro Apply de NbS.
+
+  Salidas a organizar seleccionables (`scenarios.nbs_area_batch.OutputOrganizeOptions`,
+  tres checkboxes output.rch/.sub/.hru, los tres tildados por default —
+  pedido explícito del usuario: a diferencia del batch de cobertura, que
+  siempre organiza todo lo que exista sin preguntar, acá organizar
+  `output.hru` puede tardar minutos por paso y multiplicarse por cada % de
+  la serie, así que el usuario puede desmarcarlo). `_organize_outputs` de
+  `engine/nbs_area_batch_run.py` extiende el patrón ya usado por
+  `engine.batch_run` (mismo resumen de coberturas/humedales siempre, sin
+  checkbox) sumando `output.sub` (que el batch de cobertura simple todavía
+  no organiza) y respetando qué casillas están tildadas.
+
+  Reutiliza `engine.batch_run.scenario_folder_name` tal cual (mismo nombre
+  de carpeta `scenario_<pct>pct` que el batch de cobertura) para que ambas
+  features de batch sean consistentes — ojo: si el usuario apunta las dos
+  al mismo destino con series de % solapadas, la segunda choca con
+  `FileExistsError` en esos pasos puntuales (se reporta como error de ese
+  paso, no aborta el resto — mismo criterio de tolerancia a fallos
+  puntuales de siempre), por eso la UI usa un campo de destino separado del
+  batch de cobertura, no el mismo. Un fallo puntual en un paso (copia,
+  cálculo, SWAT, o post-procesamiento) no aborta la serie — mismo criterio
+  que el resto de esta pestaña.
+
+  La tarjeta entera vive dentro de un `CTkScrollableFrame` nuevo para esta
+  pestaña (antes `_build_enabled_state` usaba un `CTkFrame` plano con el
+  log expandiendo vía `rowconfigure(weight=1)`, que ya no entraba junto con
+  esta tarjeta nueva en una ventana de pantalla chica — mismo motivo y
+  mismo patrón ya usado en `ui/tab_nbs.py`, ver CLAUDE.md general sobre
+  `TabBar`/`CTkScrollableFrame`). El log de cobertura simple pasó a altura
+  fija (`height=200`) en vez de expandirse, ya que dentro de un scroll no
+  tiene sentido pedirle a una fila que "llene el espacio restante".
+
 - **Pestaña NbS** (`ui/tab_nbs.py` + `ui/nbs_wizard_window.py` +
   `ui/nbs_operation_dialog.py` + `scenarios/nbs.py` + `scenarios/nbs_analysis.py`
   + `scenarios/nbs_apply.py`, 2026-08-11): novena pestaña, asistente para
