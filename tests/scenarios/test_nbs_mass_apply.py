@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from scenarios.nbs_mass_apply import (
+    SubbasinAreaAllocation,
     parse_mass_allocation_csv,
     plan_mass_area_allocation,
     write_mass_allocation_template_csv,
@@ -32,20 +33,20 @@ def test_parses_matrix_with_blank_cells(tmp_path: Path):
     csv_path = _write_csv(
         tmp_path,
         [
-            {"subbasin": 1, "FRST": "40", "PAST": "60"},
-            {"subbasin": 2, "FRST": "", "PAST": "20"},
+            {"subbasin": 1, "area_ha": 100, "FRST": "40", "PAST": "60"},
+            {"subbasin": 2, "area_ha": 50, "FRST": "", "PAST": "100"},
         ],
     )
 
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
     assert errors == []
-    assert allocations[1] == [("FRST", 40.0), ("PAST", 20.0)] or allocations[1] == [("FRST", 40.0), ("PAST", 60.0)]
-    assert allocations[2] == [("PAST", 20.0)]
+    assert allocations[1] == SubbasinAreaAllocation(area_ha=100.0, sources=[("FRST", 40.0), ("PAST", 60.0)])
+    assert allocations[2] == SubbasinAreaAllocation(area_ha=50.0, sources=[("PAST", 100.0)])
 
 
-def test_blank_row_is_skipped_without_error(tmp_path: Path):
-    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "FRST": "", "PAST": ""}])
+def test_blank_area_is_skipped_without_error(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": "", "FRST": "100"}])
 
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
@@ -53,33 +54,52 @@ def test_blank_row_is_skipped_without_error(tmp_path: Path):
     assert errors == []
 
 
-def test_row_sum_over_100_is_reported_and_skipped(tmp_path: Path):
+def test_zero_or_negative_area_is_reported_and_row_skipped(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 0, "FRST": "100"}])
+
+    allocations, errors = parse_mass_allocation_csv(csv_path)
+
+    assert allocations == {}
+    assert any("mayor a 0" in e for e in errors)
+
+
+def test_row_sum_not_equal_100_is_reported_and_skipped(tmp_path: Path):
     csv_path = _write_csv(
         tmp_path,
         [
-            {"subbasin": 1, "FRST": "70", "PAST": "50"},
-            {"subbasin": 2, "FRST": "30", "PAST": "20"},
+            {"subbasin": 1, "area_ha": 100, "FRST": "70", "PAST": "50"},
+            {"subbasin": 2, "area_ha": 50, "FRST": "30", "PAST": "20"},
         ],
     )
 
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
     assert 1 not in allocations
-    assert 2 in allocations
-    assert any("100%" in e and "1" in e for e in errors)
+    assert 2 not in allocations
+    assert any("suman" in e and "1" in e for e in errors)
+    assert any("suman" in e and "2" in e for e in errors)
 
 
-def test_row_sum_under_100_is_accepted(tmp_path: Path):
-    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "FRST": "10"}])
+def test_row_sum_under_100_is_reported_and_skipped(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 100, "FRST": "10"}])
 
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
-    assert errors == []
-    assert allocations[1] == [("FRST", 10.0)]
+    assert 1 not in allocations
+    assert any("suman" in e for e in errors)
+
+
+def test_area_with_no_coverage_cells_is_reported_and_skipped(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 100, "FRST": "", "PAST": ""}])
+
+    allocations, errors = parse_mass_allocation_csv(csv_path)
+
+    assert allocations == {}
+    assert any("ninguna cobertura fuente" in e for e in errors)
 
 
 def test_non_numeric_cell_is_reported_and_row_skipped(tmp_path: Path):
-    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "FRST": "abc"}])
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 100, "FRST": "abc"}])
 
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
@@ -90,24 +110,31 @@ def test_non_numeric_cell_is_reported_and_row_skipped(tmp_path: Path):
 def test_duplicate_subbasin_row_is_reported_and_ignored(tmp_path: Path):
     csv_path = _write_csv(
         tmp_path,
-        [{"subbasin": 1, "FRST": "50"}, {"subbasin": 1, "FRST": "60"}],
+        [{"subbasin": 1, "area_ha": 100, "FRST": "100"}, {"subbasin": 1, "area_ha": 50, "FRST": "100"}],
     )
 
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
-    assert allocations == {1: [("FRST", 50.0)]}
+    assert allocations == {1: SubbasinAreaAllocation(area_ha=100.0, sources=[("FRST", 100.0)])}
     assert any("más de una vez" in e for e in errors)
 
 
 def test_missing_subbasin_column_raises(tmp_path: Path):
-    csv_path = _write_csv(tmp_path, [{"FRST": "50"}])
+    csv_path = _write_csv(tmp_path, [{"area_ha": 100, "FRST": "50"}])
 
     with pytest.raises(ValueError, match="subbasin"):
         parse_mass_allocation_csv(csv_path)
 
 
+def test_missing_area_column_raises(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "FRST": "50"}])
+
+    with pytest.raises(ValueError, match="area_ha"):
+        parse_mass_allocation_csv(csv_path)
+
+
 def test_no_coverage_columns_raises(tmp_path: Path):
-    csv_path = _write_csv(tmp_path, [{"subbasin": 1}])
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 100}])
 
     with pytest.raises(ValueError, match="cobertura"):
         parse_mass_allocation_csv(csv_path)
@@ -134,21 +161,24 @@ def txtinout_dir(tmp_path: Path) -> Path:
 
 
 def test_plans_each_subbasin_independently(txtinout_dir: Path):
-    allocations = {1: [("FRST", 100.0)], 2: [("PAST", 20.0)]}
+    allocations = {
+        1: SubbasinAreaAllocation(area_ha=1000.0, sources=[("FRST", 100.0)]),
+        2: SubbasinAreaAllocation(area_ha=100.0, sources=[("PAST", 20.0)]),
+    }
 
     result = plan_mass_area_allocation(txtinout_dir.parent, allocations)
 
     assert result.skipped == {}
     plans_by_subbasin = {p.subbasin: p for p in result.plans}
-    assert plans_by_subbasin[1].total_area_ha == 1000.0  # 100% del área real de la subcuenca 1
+    assert plans_by_subbasin[1].total_area_ha == 1000.0
     assert plans_by_subbasin[1].targets == [(1, 1)]
-    assert plans_by_subbasin[2].total_area_ha == 500.0
-    assert plans_by_subbasin[2].by_source[0].requested_ha == 100.0  # 20% de 500 ha
+    assert plans_by_subbasin[2].total_area_ha == 100.0
+    assert plans_by_subbasin[2].by_source[0].requested_ha == 20.0  # 20% de 100 ha (area_ha), no del área total
     assert set(result.targets) == {(1, 1), (2, 1)}
 
 
 def test_subbasin_not_found_is_skipped(txtinout_dir: Path):
-    allocations = {99: [("FRST", 50.0)]}
+    allocations = {99: SubbasinAreaAllocation(area_ha=50.0, sources=[("FRST", 100.0)])}
 
     result = plan_mass_area_allocation(txtinout_dir.parent, allocations)
 
@@ -156,8 +186,19 @@ def test_subbasin_not_found_is_skipped(txtinout_dir: Path):
     assert 99 in result.skipped
 
 
+def test_area_over_subbasin_real_area_is_skipped(txtinout_dir: Path):
+    # La subcuenca 2 tiene solo 500 ha reales (ver fixture).
+    allocations = {2: SubbasinAreaAllocation(area_ha=600.0, sources=[("PAST", 100.0)])}
+
+    result = plan_mass_area_allocation(txtinout_dir.parent, allocations)
+
+    assert result.plans == []
+    assert 2 in result.skipped
+    assert "supera el área real" in result.skipped[2]
+
+
 def test_priorities_are_passed_through_to_every_subbasin_plan(txtinout_dir: Path):
-    allocations = {1: [("FRST", 100.0)]}
+    allocations = {1: SubbasinAreaAllocation(area_ha=1000.0, sources=[("FRST", 100.0)])}
 
     result = plan_mass_area_allocation(
         txtinout_dir.parent, allocations, slope_priority=["0-9999"], soil_priority=["SOIL1"]
@@ -169,22 +210,35 @@ def test_priorities_are_passed_through_to_every_subbasin_plan(txtinout_dir: Path
 # -- write_mass_allocation_template_csv ------------------------------------------
 
 
-def test_template_lists_every_subbasin_with_a_sample_allocation(txtinout_dir: Path):
+def test_template_excludes_the_target_coverage_column(txtinout_dir: Path):
     destination = txtinout_dir.parent / "template.csv"
 
-    write_mass_allocation_template_csv(txtinout_dir, destination)
-    allocations, errors = parse_mass_allocation_csv(destination)
-
-    assert errors == []
-    assert set(allocations.keys()) <= {1, 2}
-    assert allocations  # al menos una fila poblada de ejemplo
-
-
-def test_template_columns_cover_every_real_coverage(txtinout_dir: Path):
-    destination = txtinout_dir.parent / "template.csv"
-
-    write_mass_allocation_template_csv(txtinout_dir, destination)
+    write_mass_allocation_template_csv(txtinout_dir, destination, target_lulc="FRST")
     df = pd.read_csv(destination)
 
-    assert set(df.columns) == {"subbasin", "FRST", "PAST"}
+    # FRST es la cobertura objetivo de la NbS: no puede ser su propia fuente.
+    assert set(df.columns) == {"subbasin", "area_ha", "PAST"}
     assert list(df["subbasin"]) == [1, 2]
+
+
+def test_template_leaves_area_column_blank(txtinout_dir: Path):
+    destination = txtinout_dir.parent / "template.csv"
+
+    write_mass_allocation_template_csv(txtinout_dir, destination, target_lulc="FRST")
+    df = pd.read_csv(destination, dtype=str)
+
+    assert df["area_ha"].isna().all()
+
+
+def test_template_marks_applicable_cells_with_zero_and_the_rest_blank(txtinout_dir: Path):
+    destination = txtinout_dir.parent / "template.csv"
+
+    # Objetivo PAST: FRST es la única cobertura fuente posible, y solo la
+    # subcuenca 1 tiene HRU con FRST (la subcuenca 2 es 100% PAST).
+    write_mass_allocation_template_csv(txtinout_dir, destination, target_lulc="PAST")
+    df = pd.read_csv(destination, dtype=str)
+
+    row1 = df[df["subbasin"] == "1"].iloc[0]
+    row2 = df[df["subbasin"] == "2"].iloc[0]
+    assert row1["FRST"] == "0"
+    assert pd.isna(row2["FRST"])

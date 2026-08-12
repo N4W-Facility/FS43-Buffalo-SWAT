@@ -546,7 +546,7 @@
   "nbs_tab.area_apply_summary": "Applied to {applied}/{total} HRU (plant_id={plant_id}, cpnm={cpnm}). See log below for details.",
 
   "nbs_tab.mass_apply_title": "Apply an NbS by area (all subbasins)",
-  "nbs_tab.mass_apply_subtitle": "Same idea as \"Apply by area\" above, but for every subbasin at once: load a CSV matrix with one row per subbasin and one column per source coverage, where each cell is the % of that subbasin's total area to convert from that coverage (leave a cell blank if that coverage doesn't apply there, or the subbasin shouldn't be touched at all). A row's cells don't need to add up to 100 -- they can add up to less, leaving the rest of the subbasin untouched -- but they can never add up to more than 100.",
+  "nbs_tab.mass_apply_subtitle": "Same idea as \"Apply by area\" above, but for every subbasin at once: load a CSV matrix with one row per subbasin, an \"area_ha\" column with the NbS area you want in that subbasin, and one column per source coverage, where each cell is the % of that subbasin's area_ha (not of the subbasin's total area) to convert from that coverage. Leave area_ha blank if the subbasin shouldn't be touched at all -- a row with an area_ha needs its coverage cells to add up to 100% of it, same as \"Apply by area\" above.",
   "nbs_tab.mass_csv_label": "Allocation CSV:",
   "nbs_tab.mass_csv_not_loaded": "No CSV loaded yet.",
   "nbs_tab.mass_download_template_button": "Download template",

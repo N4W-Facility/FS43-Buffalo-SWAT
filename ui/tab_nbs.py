@@ -44,6 +44,7 @@ from scenarios.nbs_area_apply import (
 )
 from scenarios.nbs_mass_apply import (
     MassAreaAllocationResult,
+    SubbasinAreaAllocation,
     parse_mass_allocation_csv,
     plan_mass_area_allocation,
     write_mass_allocation_template_csv,
@@ -61,6 +62,21 @@ from .widgets import ReadOnlyField, bind_responsive_wraplength, build_scrollable
 # (_DEFAULT_PCT_SUM_TOLERANCE) -- para que "completo" en la UI coincida
 # exactamente con lo que el backend acepta al calcular el plan.
 _AREA_PCT_SUM_TOLERANCE = 0.5
+
+# Misma animación "vaivén" ya usada en ui/tab_summary.py para las tres
+# operaciones largas de la tarjeta de aplicación masiva (Download template,
+# Preview, Apply to all subbasins -- las tres parsean contenido .hru de
+# potencialmente miles de archivos vía scenarios.nbs_mass_apply). Deliberada-
+# mente NO se usa el modo "indeterminate" nativo de CTkProgressBar: ese modo
+# corre su propio bucle after() muy corto que, contra un modelo real, compite
+# por el GIL con el hilo de fondo y multiplica el tiempo total de la corrida
+# (medido en Summary: ~5x más lento, con cortes de hasta 2s). Este vaivén está
+# atado al mismo intervalo de sondeo (150ms) que ya usa ui.tasks.run_in_background,
+# así que no agrega ningún bucle nuevo.
+_PROGRESS_MIN = 0.15
+_PROGRESS_MAX = 0.85
+_PROGRESS_STEP = 0.05
+_PROGRESS_INTERVAL_MS = 150
 
 
 class NbSTab(ctk.CTkFrame):
@@ -83,7 +99,7 @@ class NbSTab(ctk.CTkFrame):
         self._targets: list[tuple[int, int]] = []
         self._area_source_rows: list[tuple[str, float]] = []
         self._area_coverage_request_id = 0
-        self._mass_allocations: dict[int, list[tuple[str, float]]] = {}
+        self._mass_allocations: dict[int, SubbasinAreaAllocation] = {}
 
         self._disabled_state = self._build_disabled_state()
         self._enabled_state = self._build_enabled_state()
@@ -491,8 +507,24 @@ class NbSTab(ctk.CTkFrame):
         self._mass_soil_entry = ctk.CTkEntry(priority_row)
         self._mass_soil_entry.grid(row=0, column=3, sticky="ew", padx=(8, 0))
 
+        # Barra "vaivén" compartida por las tres operaciones largas de esta
+        # tarjeta (Download template, Preview, Apply to all subbasins) -- ver
+        # comentario de _PROGRESS_MIN/MAX/STEP/INTERVAL_MS sobre por qué no es
+        # el modo "indeterminate" nativo. Una sola barra alcanza porque los
+        # tres botones ya se deshabilitan mutuamente mientras cualquiera corre
+        # (nunca hay dos operaciones de esta tarjeta corriendo a la vez).
+        self._mass_progress_bar = ctk.CTkProgressBar(
+            card, height=3, corner_radius=1,
+            fg_color=self._colors.get("border"), progress_color=self._colors.get("accent"),
+        )
+        self._mass_progress_bar.grid(row=6, column=0, sticky="ew", padx=16, pady=(12, 0))
+        self._mass_progress_bar.grid_remove()
+        self._mass_progress_animation_running = False
+        self._mass_progress_value = _PROGRESS_MIN
+        self._mass_progress_direction = 1
+
         controls = ctk.CTkFrame(card, fg_color="transparent")
-        controls.grid(row=6, column=0, sticky="ew", padx=16, pady=(12, 8))
+        controls.grid(row=7, column=0, sticky="ew", padx=16, pady=(8, 8))
         controls.columnconfigure(0, weight=1)
         self._mass_status_label = ctk.CTkLabel(
             controls, text="", text_color=self._colors.get("text_secondary"), anchor="w", justify="left"
@@ -513,8 +545,8 @@ class NbSTab(ctk.CTkFrame):
         self._mass_apply_button.grid(row=0, column=2, sticky="e")
 
         log_frame = ctk.CTkFrame(card, fg_color=self._colors.get("surface"))
-        log_frame.grid(row=7, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        card.rowconfigure(7, weight=1)
+        log_frame.grid(row=8, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        card.rowconfigure(8, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
         self._mass_log = ctk.CTkTextbox(log_frame, wrap="word", state="disabled", height=140)
@@ -560,6 +592,7 @@ class NbSTab(ctk.CTkFrame):
         self._mass_soil_entry.delete(0, "end")
         self._mass_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
         self._set_mass_log("")
+        self._stop_mass_progress()
         self._update_mass_apply_button_state()
 
         self._refresh_library()
@@ -1085,6 +1118,16 @@ class NbSTab(ctk.CTkFrame):
     def _on_mass_download_template_clicked(self) -> None:
         if self._project_dir is None:
             return
+
+        name = self._mass_nbs_selector.get()
+        # Mismo criterio que _run_mass_plan: releído de disco, no self._library.
+        definition = next((d for d in load_library(self._project_dir) if d.name == name), None)
+        if definition is None:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.no_nbs_selected_error"), text_color=self._colors.get("error")
+            )
+            return
+
         path = filedialog.asksaveasfilename(
             defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="nbs_mass_apply_template.csv",
         )
@@ -1093,15 +1136,17 @@ class NbSTab(ctk.CTkFrame):
 
         project_dir = self._project_dir
         destination = Path(path)
+        target_lulc = definition.target_lulc
 
         self._set_mass_controls_enabled(False)
         self._mass_status_label.configure(
             text=self._config.text("nbs_tab.mass_generating_template"), text_color=self._colors.get("text_secondary")
         )
+        self._start_mass_progress()
         self._on_run_state_changed(True)
 
         def work(_report_progress):
-            return write_mass_allocation_template_csv(project_dir / "TxtInOut", destination)
+            return write_mass_allocation_template_csv(project_dir / "TxtInOut", destination, target_lulc)
 
         def on_done(result_path: Path) -> None:
             self._mass_status_label.configure(
@@ -1121,7 +1166,33 @@ class NbSTab(ctk.CTkFrame):
 
     def _finish_mass_operation(self) -> None:
         self._set_mass_controls_enabled(True)
+        self._stop_mass_progress()
         self._on_run_state_changed(False)
+
+    def _start_mass_progress(self) -> None:
+        self._mass_progress_bar.grid()
+        self._mass_progress_value = _PROGRESS_MIN
+        self._mass_progress_direction = 1
+        self._mass_progress_bar.set(self._mass_progress_value)
+        self._mass_progress_animation_running = True
+        self.after(_PROGRESS_INTERVAL_MS, self._animate_mass_progress)
+
+    def _animate_mass_progress(self) -> None:
+        if not self._mass_progress_animation_running:
+            return
+        self._mass_progress_value += _PROGRESS_STEP * self._mass_progress_direction
+        if self._mass_progress_value >= _PROGRESS_MAX:
+            self._mass_progress_value = _PROGRESS_MAX
+            self._mass_progress_direction = -1
+        elif self._mass_progress_value <= _PROGRESS_MIN:
+            self._mass_progress_value = _PROGRESS_MIN
+            self._mass_progress_direction = 1
+        self._mass_progress_bar.set(self._mass_progress_value)
+        self.after(_PROGRESS_INTERVAL_MS, self._animate_mass_progress)
+
+    def _stop_mass_progress(self) -> None:
+        self._mass_progress_animation_running = False
+        self._mass_progress_bar.grid_remove()
 
     def _set_mass_controls_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -1191,6 +1262,7 @@ class NbSTab(ctk.CTkFrame):
         self._mass_status_label.configure(
             text=self._config.text("nbs_tab.mass_computing_plan"), text_color=self._colors.get("text_secondary")
         )
+        self._start_mass_progress()
 
         def work(_report_progress):
             return plan_mass_area_allocation(
@@ -1198,11 +1270,13 @@ class NbSTab(ctk.CTkFrame):
             )
 
         def on_done(result: MassAreaAllocationResult) -> None:
+            self._stop_mass_progress()
             self._update_mass_apply_button_state()
             self._mass_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
             on_ready(definition, result)
 
         def on_error(error: Exception) -> None:
+            self._stop_mass_progress()
             self._update_mass_apply_button_state()
             self._mass_status_label.configure(
                 text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
@@ -1271,6 +1345,7 @@ class NbSTab(ctk.CTkFrame):
         self._mass_status_label.configure(
             text=self._config.text("nbs_tab.mass_applying"), text_color=self._colors.get("text_secondary")
         )
+        self._start_mass_progress()
         self._on_run_state_changed(True)
 
         def work(_report_progress):
@@ -1312,6 +1387,7 @@ class NbSTab(ctk.CTkFrame):
         self._update_area_apply_button_state()
         self._mass_preview_button.configure(state="normal")
         self._update_mass_apply_button_state()
+        self._stop_mass_progress()
         self._on_run_state_changed(False)
 
     def _set_mass_log(self, text: str) -> None:

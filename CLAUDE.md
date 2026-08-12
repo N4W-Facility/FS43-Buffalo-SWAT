@@ -764,25 +764,35 @@ vez de CSV — ver esa pestaña más abajo.
   subbasins)" de la misma pestaña, 2026-08-12): pedido explícito del
   usuario — extensión de "Aplicar una NbS por área" de arriba para no
   repetirla subcuenca por subcuenca. Entrada: un CSV en forma de matriz
-  (fila = subcuenca, columna = cobertura fuente, celda = % del área de esa
-  subcuenca a convertir desde esa cobertura); celda vacía = esa cobertura
-  no participa en esa subcuenca, fila sin ninguna celda = esa subcuenca no
-  participa del batch (se omite sin error). Decisión de diseño explícita,
-  distinta de la sección manual de arriba: acá no hay un campo "área total
-  a convertir" separado — cada celda ya es, directamente, el % del área
-  TOTAL de esa subcuenca (no de un subtotal libre elegido a mano). Por eso
-  las celdas de una fila NO tienen que sumar exactamente 100 (a diferencia
-  de `validate_source_allocations`, que sí lo exige para la sección
-  manual): pueden sumar menos (el resto de la subcuenca queda sin tocar)
-  pero nunca más de 100 (no se puede tomar más área de la que tiene la
-  subcuenca) — validado en `parse_mass_allocation_csv`, que además reporta
-  y omite (sin abortar el resto del CSV) cualquier fila puntual inválida
-  (valor no numérico, suma > 100, subcuenca repetida), mismo criterio de
-  tolerancia a fallos puntuales que Batch. Con `total_area_ha` ya fijado
-  como el área real de la subcuenca, `plan_mass_area_allocation` reutiliza
-  `plan_area_allocation` sin ningún cambio al algoritmo de selección de
-  HRU, subcuenca por subcuenca (una subcuenca sin `.sub` localizable o sin
-  ninguna HRU se omite y se reporta, no aborta el batch). Prioridad de
+  (fila = subcuenca, columna `area_ha` + una columna por cobertura fuente,
+  celda de cobertura = % de `area_ha` — no del área total de la subcuenca
+  — a convertir desde esa cobertura); celda de cobertura vacía = esa
+  cobertura no participa en esa subcuenca, `area_ha` vacía = esa subcuenca
+  no participa del batch (se omite sin error). Diseño revisado 2026-08-12
+  (pedido explícito del usuario, reemplazando la v1 de esta misma
+  feature): la v1 no tenía columna de área separada — cada celda ya era,
+  directamente, el % del área TOTAL de la subcuenca, lo que obligaba a
+  razonar al revés ("¿qué % de mi subcuenca es esta NbS de 50 ha que
+  quiero plantar?") en vez de partir del área que se quiere. Ahora
+  `area_ha` es el área NbS objetivo de esa subcuenca (en hectáreas) y las
+  celdas de cobertura vuelven a ser % de esa área — mismo criterio que
+  `total_area_ha` + `source_allocations` de la sección manual
+  (`nbs_area_apply.plan_area_allocation`) — así que ahora SÍ tienen que
+  sumar 100 (`parse_mass_allocation_csv`, misma tolerancia que
+  `validate_source_allocations`), a diferencia de la v1 donde alcanzaba
+  con "≤100". `plan_mass_area_allocation` valida además que `area_ha` no
+  supere el área real de la subcuenca (leída de su `.sub`) — antes esto
+  quedaba implícito en que el % nunca podía superar 100 del área real; una
+  subcuenca que lo excede se omite y se reporta (`result.skipped`), mismo
+  criterio de tolerancia a fallos puntuales que ya tenía la v1 (y que
+  `parse_mass_allocation_csv` sigue aplicando para cualquier otra fila
+  puntual inválida: valor no numérico, suma ≠ 100, subcuenca repetida, sin
+  abortar el resto del CSV — mismo criterio que Batch). Con `total_area_ha`
+  ahora `allocation.area_ha` (no el área real de la subcuenca),
+  `plan_mass_area_allocation` sigue reutilizando `plan_area_allocation`
+  sin ningún cambio al algoritmo de selección de HRU, subcuenca por
+  subcuenca (una subcuenca sin `.sub` localizable o sin ninguna HRU
+  también se omite y se reporta, no aborta el batch). Prioridad de
   pendiente/suelo: una sola configuración global para todo el batch (mismo
   criterio que `donor_priority` en Batch Scenarios), no una columna por
   subcuenca — evita una matriz todavía más ancha sin un caso de uso real
@@ -792,11 +802,42 @@ vez de CSV — ver esa pestaña más abajo.
   targets de todas juntas (esa función ya soportaba targets de más de una
   subcuenca). "Download template" (`write_mass_allocation_template_csv`,
   mismo criterio que el template de Batch y "Export CSV" de HRUs) escanea
-  el proyecto y arma una fila por subcuenca real y una columna por
-  cobertura real, con la primera cobertura de cada subcuenca poblada a modo
-  de ejemplo. Los tres botones de aplicar (manual, por área, y por área en
+  el proyecto y arma una fila por subcuenca real, una columna `area_ha` en
+  blanco (a completar por el usuario — como ninguna fila del template
+  participa hasta que se llene `area_ha`, sus ceros de cobertura no
+  necesitan sumar 100 de entrada) y una columna por cobertura real — pero,
+  a diferencia de esos otros templates, es específico de la NbS elegida en
+  el selector (`_mass_nbs_selector`, exige
+  una NbS seleccionada antes de generar el archivo, mismo chequeo que
+  Preview/Apply): `target_lulc` de la NbS ni siquiera aparece como columna
+  (no puede ser su propia fuente) y cada celda que sí es una cobertura
+  fuente válida en esa subcuenca se puebla con `0` en vez de un valor de
+  ejemplo — pedido explícito del usuario, 2026-08-12: antes solo la
+  primera cobertura de cada fila traía un ejemplo (10%) y el resto quedaba
+  en blanco sin que el usuario pudiera distinguir "esta cobertura no
+  existe en esta subcuenca" de "esta cobertura no aplica para esta NbS
+  pero sí existe" — con `0` en toda celda aplicable, blanco pasa a
+  significar únicamente lo primero, y el usuario ve de un vistazo qué
+  celdas puede editar sin arriesgarse a convertir una cobertura hacia sí
+  misma. Los tres botones de aplicar (manual, por área, y por área en
   todas las subcuencas) se deshabilitan mutuamente mientras cualquiera
   corre, mismo motivo que ya llevó a esa regla entre los primeros dos.
+
+  Las tres operaciones largas de esta tarjeta (Download template, Preview,
+  Apply to all subbasins) muestran una barra de progreso "vaivén" mientras
+  corren en hilo de fondo -- pedido explícito del usuario, 2026-08-12: sin
+  ninguna señal visual además del texto gris estático, un escaneo largo
+  contra un modelo real (miles de `.hru`) parece que la app se congeló y
+  tienta a cerrarla. Reutiliza tal cual el patrón ya resuelto en
+  `ui/tab_summary.py` (constantes `_PROGRESS_MIN/MAX/STEP/INTERVAL_MS`,
+  `CTkProgressBar` movida a mano en vez de su modo `indeterminate` nativo):
+  ese modo nativo corre su propio bucle `after()` muy corto que, medido
+  contra un modelo real, compite por el GIL con el hilo de fondo y
+  multiplica el tiempo total de la corrida (~5x más lento, con cortes de
+  hasta 2s) -- el vaivén en cambio está atado al mismo intervalo de sondeo
+  (150ms) que ya usa `ui.tasks.run_in_background`, sin agregar ningún bucle
+  nuevo. Una sola barra alcanza para las tres operaciones porque ya se
+  deshabilitan mutuamente (nunca corren dos a la vez).
 
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está

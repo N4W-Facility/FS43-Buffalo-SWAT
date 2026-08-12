@@ -19,6 +19,7 @@ import pytest
 
 from config.settings import ConfigManager
 from scenarios.nbs import NbSDefinition, add_or_replace
+from scenarios.nbs_mass_apply import SubbasinAreaAllocation
 from swat_io.hru.parser import parse_hru_file
 from ui.tab_nbs import NbSTab
 
@@ -126,12 +127,17 @@ def test_mass_load_csv_enables_preview_and_apply_buttons(hidden_root, config, pr
     assert tab._mass_apply_button.cget("state") == "disabled"
 
     csv_path = project / "matrix.csv"
-    pd.DataFrame([{"subbasin": 1, "AGRL": 100}, {"subbasin": 2, "AGRL": 50}]).to_csv(csv_path, index=False)
+    pd.DataFrame(
+        [{"subbasin": 1, "area_ha": 100, "AGRL": 100}, {"subbasin": 2, "area_ha": 50, "AGRL": 100}]
+    ).to_csv(csv_path, index=False)
     monkeypatch.setattr("ui.tab_nbs.filedialog.askopenfilename", lambda **_kw: str(csv_path))
 
     tab._on_mass_load_csv_clicked()
 
-    assert tab._mass_allocations == {1: [("AGRL", 100.0)], 2: [("AGRL", 50.0)]}
+    assert tab._mass_allocations == {
+        1: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+        2: SubbasinAreaAllocation(area_ha=50.0, sources=[("AGRL", 100.0)]),
+    }
     assert tab._mass_preview_button.cget("state") == "normal"
     assert tab._mass_apply_button.cget("state") == "normal"
 
@@ -143,7 +149,10 @@ def test_mass_plan_computes_independent_plan_per_subbasin(hidden_root, config, p
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
     tab._mass_nbs_selector.current(0)
-    tab._mass_allocations = {1: [("AGRL", 100.0)], 2: [("AGRL", 50.0)]}
+    tab._mass_allocations = {
+        1: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+        2: SubbasinAreaAllocation(area_ha=50.0, sources=[("AGRL", 100.0)]),
+    }
 
     captured = []
     tab._run_mass_plan(lambda definition, result: captured.append((definition, result)))
@@ -152,9 +161,9 @@ def test_mass_plan_computes_independent_plan_per_subbasin(hidden_root, config, p
     _definition, result = captured[0]
     plans_by_subbasin = {p.subbasin: p for p in result.plans}
     assert plans_by_subbasin[1].targets == [(1, 1)]
-    assert plans_by_subbasin[1].by_source[0].requested_ha == 100.0  # 100% de 100 ha
+    assert plans_by_subbasin[1].by_source[0].requested_ha == 100.0  # 100% del area_ha (100 ha) de la subcuenca 1
     assert plans_by_subbasin[2].targets == [(2, 1)]
-    assert plans_by_subbasin[2].by_source[0].requested_ha == 50.0  # 50% de 100 ha
+    assert plans_by_subbasin[2].by_source[0].requested_ha == 50.0  # 100% del area_ha (50 ha) de la subcuenca 2
     assert result.skipped == {}
 
 
@@ -165,7 +174,10 @@ def test_mass_apply_writes_real_hru_mgt_files_across_subbasins(hidden_root, conf
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
     tab._mass_nbs_selector.current(0)
-    tab._mass_allocations = {1: [("AGRL", 100.0)], 2: [("AGRL", 100.0)]}
+    tab._mass_allocations = {
+        1: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+        2: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+    }
 
     tab._on_mass_apply_clicked()
 
@@ -182,7 +194,10 @@ def test_mass_apply_skips_subbasin_not_in_project_without_aborting(hidden_root, 
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
     tab._mass_nbs_selector.current(0)
-    tab._mass_allocations = {1: [("AGRL", 100.0)], 99: [("AGRL", 100.0)]}
+    tab._mass_allocations = {
+        1: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+        99: SubbasinAreaAllocation(area_ha=100.0, sources=[("AGRL", 100.0)]),
+    }
 
     captured = []
     tab._run_mass_plan(lambda definition, result: captured.append((definition, result)))
