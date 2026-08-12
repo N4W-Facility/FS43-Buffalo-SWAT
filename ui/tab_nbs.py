@@ -70,6 +70,7 @@ class NbSTab(ctk.CTkFrame):
         self._subbasins: list[int] = []
         self._targets: list[tuple[int, int]] = []
         self._area_source_rows: list[tuple[str, float]] = []
+        self._area_coverage_request_id = 0
 
         self._disabled_state = self._build_disabled_state()
         self._enabled_state = self._build_enabled_state()
@@ -633,19 +634,54 @@ class NbSTab(ctk.CTkFrame):
         self._refresh_area_coverage_options()
 
     def _refresh_area_coverage_options(self) -> None:
+        self._area_coverage_request_id += 1
+        request_id = self._area_coverage_request_id
+
         if self._project_dir is None or not self._area_subbasin_selector.get():
             self._area_coverage_selector.configure(values=[])
             self._area_coverage_selector.set("")
             return
+
+        project_dir = self._project_dir
         subbasin_id = int(self._area_subbasin_selector.get())
-        txtinout_dir = self._project_dir / "TxtInOut"
-        hru_files = load_subbasin_hru_files(txtinout_dir, subbasin_id)
-        options = subbasin_land_uses(hru_files)
-        self._area_coverage_selector.configure(values=options)
-        if options:
-            self._area_coverage_selector.current(0)
-        else:
-            self._area_coverage_selector.set("")
+
+        # load_subbasin_hru_files parsea el contenido de cada .hru de la
+        # subcuenca (no solo el nombre de archivo) -- con un modelo real
+        # una subcuenca puede tener cientos/miles de HRU, así que esto
+        # corre en hilo de fondo (patrón obligatorio de CLAUDE.md) en vez
+        # de bloquear la ventana como antes. request_id descarta el
+        # resultado si el usuario ya cambió de subcuenca/proyecto mientras
+        # corría.
+        self._area_coverage_selector.configure(values=[])
+        self._area_coverage_selector.set("")
+        self._area_status_label.configure(
+            text=self._config.text("nbs_tab.area_loading_coverages"), text_color=self._colors.get("text_secondary")
+        )
+
+        def work(_report_progress):
+            txtinout_dir = project_dir / "TxtInOut"
+            hru_files = load_subbasin_hru_files(txtinout_dir, subbasin_id)
+            return subbasin_land_uses(hru_files)
+
+        def on_done(options: list[str]) -> None:
+            if request_id != self._area_coverage_request_id:
+                return
+            self._area_coverage_selector.configure(values=options)
+            if options:
+                self._area_coverage_selector.current(0)
+            else:
+                self._area_coverage_selector.set("")
+            self._area_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
+
+        def on_error(error: Exception) -> None:
+            if request_id != self._area_coverage_request_id:
+                return
+            self._area_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
 
     def _on_add_source_row_clicked(self) -> None:
         coverage = self._area_coverage_selector.get()
@@ -694,9 +730,15 @@ class NbSTab(ctk.CTkFrame):
         color = self._colors.get("text_secondary") if abs(total - 100) <= 0.5 else self._colors.get("warning")
         self._area_total_pct_label.configure(text=label, text_color=color)
 
-    def _build_area_plan(self) -> tuple[NbSDefinition, AreaAllocationPlan] | None:
+    def _run_area_plan(self, on_ready: Callable[[NbSDefinition, AreaAllocationPlan], None]) -> None:
+        """Valida los inputs (barato) en el hilo principal y calcula el plan
+        (load_subbasin_hru_files + plan_area_allocation) en hilo de fondo --
+        mismo motivo que _refresh_area_coverage_options: load_subbasin_hru_files
+        parsea el contenido de cada .hru de la subcuenca, y con un modelo real
+        eso puede tardar lo suficiente como para congelar la ventana si corre
+        en el hilo de UI al hacer clic en Preview/Apply by area."""
         if self._project_dir is None:
-            return None
+            return
 
         name = self._area_nbs_selector.get()
         # Mismo criterio que el Apply manual: releído de disco, no self._library.
@@ -705,16 +747,16 @@ class NbSTab(ctk.CTkFrame):
             self._area_status_label.configure(
                 text=self._config.text("nbs_tab.no_nbs_selected_error"), text_color=self._colors.get("error")
             )
-            return None
+            return
 
         if not self._area_subbasin_selector.get():
-            return None
+            return
         subbasin_id = int(self._area_subbasin_selector.get())
 
         errors = validate_source_allocations(self._area_source_rows)
         if errors:
             self._area_status_label.configure(text=" ".join(errors), text_color=self._colors.get("error"))
-            return None
+            return
 
         try:
             total_area_ha = float(self._area_total_entry.get())
@@ -724,23 +766,49 @@ class NbSTab(ctk.CTkFrame):
             self._area_status_label.configure(
                 text=self._config.text("nbs_tab.area_invalid_total_area_error"), text_color=self._colors.get("error")
             )
-            return None
+            return
 
-        txtinout_dir = self._project_dir / "TxtInOut"
-        hru_files = load_subbasin_hru_files(txtinout_dir, subbasin_id)
-        sub_entry = next((s for s in discover_subbasins(txtinout_dir) if s.subbasin_id == subbasin_id), None)
-        if sub_entry is None:
-            return None
-        subbasin_area_ha = parse_sub_file(sub_entry.sub_file, subbasin_id).area_km2 * 100
+        project_dir = self._project_dir
+        source_allocations = list(self._area_source_rows)
+        slope_priority = parse_priority_text(self._area_slope_entry.get())
+        soil_priority = parse_priority_text(self._area_soil_entry.get())
 
-        plan = plan_area_allocation(
-            subbasin_id, hru_files, subbasin_area_ha,
-            total_area_ha=total_area_ha, source_allocations=list(self._area_source_rows),
-            slope_priority=parse_priority_text(self._area_slope_entry.get()),
-            soil_priority=parse_priority_text(self._area_soil_entry.get()),
+        self._area_preview_button.configure(state="disabled")
+        self._area_apply_button.configure(state="disabled")
+        self._area_status_label.configure(
+            text=self._config.text("nbs_tab.area_loading_coverages"), text_color=self._colors.get("text_secondary")
         )
-        self._area_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
-        return definition, plan
+
+        def work(_report_progress):
+            txtinout_dir = project_dir / "TxtInOut"
+            hru_files = load_subbasin_hru_files(txtinout_dir, subbasin_id)
+            sub_entry = next((s for s in discover_subbasins(txtinout_dir) if s.subbasin_id == subbasin_id), None)
+            if sub_entry is None:
+                return None
+            subbasin_area_ha = parse_sub_file(sub_entry.sub_file, subbasin_id).area_km2 * 100
+            return plan_area_allocation(
+                subbasin_id, hru_files, subbasin_area_ha,
+                total_area_ha=total_area_ha, source_allocations=source_allocations,
+                slope_priority=slope_priority, soil_priority=soil_priority,
+            )
+
+        def on_done(plan: AreaAllocationPlan | None) -> None:
+            self._area_preview_button.configure(state="normal")
+            self._area_apply_button.configure(state="normal")
+            if plan is None:
+                return
+            self._area_status_label.configure(text="", text_color=self._colors.get("text_secondary"))
+            on_ready(definition, plan)
+
+        def on_error(error: Exception) -> None:
+            self._area_preview_button.configure(state="normal")
+            self._area_apply_button.configure(state="normal")
+            self._area_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
 
     def _render_area_plan_preview(self, plan: AreaAllocationPlan) -> None:
         lines = [
@@ -762,17 +830,15 @@ class NbSTab(ctk.CTkFrame):
         self._set_area_log("\n".join(lines))
 
     def _on_area_preview_clicked(self) -> None:
-        built = self._build_area_plan()
-        if built is None:
-            return
-        _definition, plan = built
+        self._run_area_plan(self._render_area_plan_preview_ready)
+
+    def _render_area_plan_preview_ready(self, _definition: NbSDefinition, plan: AreaAllocationPlan) -> None:
         self._render_area_plan_preview(plan)
 
     def _on_area_apply_clicked(self) -> None:
-        built = self._build_area_plan()
-        if built is None:
-            return
-        definition, plan = built
+        self._run_area_plan(self._confirm_area_apply)
+
+    def _confirm_area_apply(self, definition: NbSDefinition, plan: AreaAllocationPlan) -> None:
         targets = plan.targets
         if not targets:
             self._area_status_label.configure(

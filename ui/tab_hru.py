@@ -101,6 +101,7 @@ class HRUsTab(ctk.CTkFrame):
         self._hru_files: dict[int, object] = {}
         self._table: pd.DataFrame = pd.DataFrame()
         self._staged: dict[tuple[int, int], dict[str, float]] = {}
+        self._table_request_id = 0
 
         self._disabled_state = self._build_disabled_state()
         self._enabled_state = self._build_enabled_state()
@@ -286,6 +287,9 @@ class HRUsTab(ctk.CTkFrame):
         self._tree.delete(*self._tree.get_children())
         self._tree["columns"] = []
 
+        self._table_request_id += 1
+        request_id = self._table_request_id
+
         if not selected:
             self._edit_button.configure(state="disabled")
             self._export_button.configure(state="disabled")
@@ -293,9 +297,43 @@ class HRUsTab(ctk.CTkFrame):
             self._hru_fr_sum_label.configure(text="")
             return
 
+        # load_subbasin_hru_files parsea el contenido de cada .hru de la
+        # subcuenca (no solo el nombre de archivo) -- con un modelo real
+        # una subcuenca puede tener cientos/miles de HRU, así que esto
+        # corre en hilo de fondo (mismo motivo y mismo fix que
+        # ui/tab_nbs.py _refresh_area_coverage_options/_run_area_plan,
+        # 2026-08-12) en vez de bloquear la ventana como antes cada vez
+        # que se abría el proyecto, se cambiaba de subcuenca, se cerraba
+        # el editor, se cargaba un CSV o se confirmaba un edit inline --
+        # todos disparan _refresh_table. request_id descarta el resultado
+        # si el usuario ya cambió de subcuenca/proyecto mientras corría.
         subbasin_id = int(selected)
-        self._hru_files = load_subbasin_hru_files(self._project_dir / "TxtInOut", subbasin_id)
-        table = build_hru_table(self._hru_files)
+        project_dir = self._project_dir
+
+        self._edit_button.configure(state="disabled")
+        self._export_button.configure(state="disabled")
+        self._set_status(self._config.text("hru_tab.loading_table"))
+
+        def work(_report_progress):
+            hru_files = load_subbasin_hru_files(project_dir / "TxtInOut", subbasin_id)
+            return hru_files, build_hru_table(hru_files)
+
+        def on_done(result: tuple[dict[int, object], pd.DataFrame]) -> None:
+            if request_id != self._table_request_id:
+                return
+            hru_files, table = result
+            self._populate_table(subbasin_id, hru_files, table)
+
+        def on_error(error: Exception) -> None:
+            if request_id != self._table_request_id:
+                return
+            self._materialize_button.configure(state="normal" if self._staged else "disabled")
+            self._set_status(self._config.text("hru_tab.load_error").format(error=str(error)), error=True)
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
+
+    def _populate_table(self, subbasin_id: int, hru_files: dict[int, object], table: pd.DataFrame) -> None:
+        self._hru_files = hru_files
         self._table = table
         self._update_hru_fr_sum_label(subbasin_id, table)
 

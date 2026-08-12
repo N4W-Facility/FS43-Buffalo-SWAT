@@ -111,7 +111,13 @@ def _install_synchronous_mocks(monkeypatch) -> None:
     )
 
 
-def test_area_apply_card_lists_subbasin_coverages_on_project_open(hidden_root, config, project) -> None:
+def test_area_apply_card_lists_subbasin_coverages_on_project_open(hidden_root, config, project, monkeypatch) -> None:
+    # load_subbasin_hru_files corre en hilo de fondo (ver comentario en
+    # _refresh_area_coverage_options); acá se corre sincrónico vía el
+    # mismo mock que el resto de esta suite, no se depende de threading
+    # real en un test.
+    _install_synchronous_mocks(monkeypatch)
+
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
 
@@ -119,7 +125,7 @@ def test_area_apply_card_lists_subbasin_coverages_on_project_open(hidden_root, c
     assert list(tab._area_coverage_selector.cget("values")) == ["AGRL"]
 
 
-def test_area_apply_preview_selects_both_hru_to_cover_requested_area(hidden_root, config, project) -> None:
+def test_area_apply_preview_selects_both_hru_to_cover_requested_area(hidden_root, config, project, monkeypatch) -> None:
     add_or_replace(
         project,
         NbSDefinition(
@@ -127,6 +133,8 @@ def test_area_apply_preview_selects_both_hru_to_cover_requested_area(hidden_root
             hru_params={"CANMX": 3.0, "OV_N": 0.12}, mgt_initial={"IGRO": 0}, cn2_by_hsg={"C": 88.33}, operations=[],
         ),
     )
+
+    _install_synchronous_mocks(monkeypatch)
 
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
@@ -139,9 +147,10 @@ def test_area_apply_preview_selects_both_hru_to_cover_requested_area(hidden_root
 
     # 80 ha pedidos, cada HRU solo aporta 50 ha -> hacen falta las dos.
     tab._area_total_entry.insert(0, "80")
-    built = tab._build_area_plan()
-    assert built is not None
-    _definition, plan = built
+    captured = []
+    tab._run_area_plan(lambda definition, plan: captured.append((definition, plan)))
+    assert captured
+    _definition, plan = captured[0]
     assert plan.targets == [(1, 1), (1, 2)]
     assert plan.by_source[0].selected_ha == 100.0
 
@@ -155,6 +164,8 @@ def test_area_apply_writes_real_hru_mgt_files_for_selected_hrus(hidden_root, con
         ),
     )
 
+    _install_synchronous_mocks(monkeypatch)
+
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
     tab._area_nbs_selector.current(0)
@@ -163,7 +174,6 @@ def test_area_apply_writes_real_hru_mgt_files_for_selected_hrus(hidden_root, con
     tab._on_add_source_row_clicked()
     tab._area_total_entry.insert(0, "80")
 
-    _install_synchronous_mocks(monkeypatch)
     tab._on_area_apply_clicked()
 
     for hru_id in (1, 2):
@@ -183,6 +193,8 @@ def test_area_apply_reports_deficit_without_aborting_when_not_enough_source_area
         ),
     )
 
+    _install_synchronous_mocks(monkeypatch)
+
     tab = NbSTab(hidden_root, config)
     tab.set_project(project)
     tab._area_nbs_selector.current(0)
@@ -193,13 +205,13 @@ def test_area_apply_reports_deficit_without_aborting_when_not_enough_source_area
     # de 50 ha pero igual debe aplicar las dos HRU disponibles.
     tab._area_total_entry.insert(0, "150")
 
-    built = tab._build_area_plan()
-    assert built is not None
-    _definition, plan = built
+    captured = []
+    tab._run_area_plan(lambda definition, plan: captured.append((definition, plan)))
+    assert captured
+    _definition, plan = captured[0]
     assert plan.targets == [(1, 1), (1, 2)]
     assert plan.total_deficit_ha == 50.0
 
-    _install_synchronous_mocks(monkeypatch)
     tab._on_area_apply_clicked()
 
     for hru_id in (1, 2):
