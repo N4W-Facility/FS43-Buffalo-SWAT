@@ -126,6 +126,8 @@ def test_scenario_comparison_window_toggle_panels_does_not_raise(hidden_root, co
     window = ScenarioComparisonWindow(hidden_root, config)
     window.update()
 
+    window._source_selector.set(config.text("scenario_comparison_window.source_sub"))
+    window._refresh_source_panels()
     window._source_selector.set(config.text("scenario_comparison_window.source_hru"))
     window._refresh_source_panels()
     window._hru_mode_selector.set(config.text("scenario_comparison_window.hru_mode_group"))

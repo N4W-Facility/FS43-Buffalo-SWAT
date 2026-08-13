@@ -15,12 +15,15 @@ Este módulo es de solo lectura: nunca escribe sobre ningún TxtInOut, solo
 lee lo que Organize (.rch / .hru) ya dejó en cada scenario_<pct>pct/ y
 escribe los CSV combinados en <batch_dir>/comparison_exports/.
 
-Tres modos de exportación, todos "wide" en escenario (una columna por
+Cuatro modos de exportación, todos "wide" en escenario (una columna por
 escenario, que es el eje que se quiere comparar) y "long" en la dimensión
 espacial que no se colapsa a un único punto:
 
 - RCH: siempre incluye todos los reach de la cuenca (un reach ya es su
   propia unidad espacial, sin agregación) -- columnas date, reach,
+  <escenario...>.
+- SUB: mismo criterio que RCH pero sobre output.sub -- siempre todas las
+  subcuencas de la cuenca, sin agregación -- columnas date, sub,
   <escenario...>.
 - HRU puntual: un único HRU -- columnas date, <escenario...>.
 - HRU agrupado (cobertura/pendiente/suelo, ej. "todas las HRU de bosque"):
@@ -61,6 +64,7 @@ from swat_io.hru_output_parser import (
     read_hru_series,
 )
 from swat_io.rch_parser import RCH_VARIABLE_COLUMNS, rch_timeseries_dir, read_rch_timeseries_dir
+from swat_io.sub_output_parser import SUB_VARIABLE_COLUMNS, read_sub_timeseries_dir, sub_timeseries_dir
 
 _COMPARISON_EXPORTS_DIRNAME = "comparison_exports"
 _AGGREGATION_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "hru_variable_aggregation.json"
@@ -249,6 +253,50 @@ def export_rch_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
             continue
         merged = merged.sort_values(["reach", "date"]).reset_index(drop=True)
         path = dest_dir / f"rch_{variable}.csv"
+        merged.to_csv(path, index=False)
+        written.append(path)
+
+    if not written:
+        raise ComparisonExportError("Ninguna de las variables elegidas tiene datos en los escenarios encontrados.")
+    return written
+
+
+# -- exportación SUB: todas las subcuencas de la cuenca, por variable --------
+
+
+def export_sub_comparison(batch_dir: Path | str, variables: list[str], dest_dir: Path | str | None = None) -> list[Path]:
+    """Un CSV por variable (date, sub, <escenario...>), combinando todas las
+    subcuencas y todos los escenarios del batch. No agrega nada -- misma
+    lógica que export_rch_comparison, cada subcuenca ya es su propia unidad
+    espacial (ver docstring del módulo)."""
+    scenario_dirs = discover_scenario_dirs(batch_dir)
+    if not scenario_dirs:
+        raise ComparisonExportError("No se encontró ningún escenario (carpeta con TxtInOut/) en la carpeta de batch.")
+    if not variables:
+        raise ComparisonExportError("No se eligió ninguna variable para exportar.")
+
+    dest_dir = Path(dest_dir) if dest_dir is not None else comparison_exports_dir(batch_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    frames: dict[str, pd.DataFrame] = {}
+    for scenario_dir in scenario_dirs:
+        df = read_sub_timeseries_dir(sub_timeseries_dir(scenario_dir))
+        if not df.empty:
+            frames[scenario_label(scenario_dir)] = df
+
+    if not frames:
+        raise ComparisonExportError("Ningún escenario tiene output.sub organizado todavía (botón \"Organize .sub\").")
+
+    written: list[Path] = []
+    for variable in variables:
+        merged: pd.DataFrame | None = None
+        for label, df in frames.items():
+            piece = df[["date", "sub", variable]].rename(columns={variable: label})
+            merged = piece if merged is None else merged.merge(piece, on=["date", "sub"], how="outer")
+        if merged is None or merged.empty:
+            continue
+        merged = merged.sort_values(["sub", "date"]).reset_index(drop=True)
+        path = dest_dir / f"sub_{variable}.csv"
         merged.to_csv(path, index=False)
         written.append(path)
 

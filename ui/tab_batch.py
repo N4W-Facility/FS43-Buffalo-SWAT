@@ -391,11 +391,22 @@ class BatchTab(ctk.CTkFrame):
         )
         self._nbs_batch_status_label.grid(row=0, column=0, sticky="w")
         bind_responsive_wraplength(self._nbs_batch_status_label)
+        self._nbs_batch_compare_button = ctk.CTkButton(
+            controls,
+            text=self._config.text("batch_tab.nbs_area_compare_button"),
+            fg_color="transparent",
+            border_width=1,
+            border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"),
+            hover_color=self._colors.get("window_bg"),
+            command=self._on_nbs_batch_compare_clicked,
+        )
+        self._nbs_batch_compare_button.grid(row=0, column=1, sticky="e", padx=(0, 8))
         self._nbs_batch_run_button = ctk.CTkButton(
             controls, text=self._config.text("batch_tab.nbs_area_run_button"),
             command=self._on_nbs_batch_run_clicked, state="disabled",
         )
-        self._nbs_batch_run_button.grid(row=0, column=1, sticky="e")
+        self._nbs_batch_run_button.grid(row=0, column=2, sticky="e")
 
         log_label = ctk.CTkLabel(
             card, text=self._config.text("batch_tab.nbs_area_log_label"), text_color=self._colors.get("text_secondary"),
@@ -462,6 +473,9 @@ class BatchTab(ctk.CTkFrame):
 
     def _on_compare_clicked(self) -> None:
         ScenarioComparisonWindow(self, self._config, initial_batch_dir=self._destination_dir)
+
+    def _on_nbs_batch_compare_clicked(self) -> None:
+        ScenarioComparisonWindow(self, self._config, initial_batch_dir=self._nbs_batch_destination_dir)
 
     # -- configuración CSV ---------------------------------------------------
 
@@ -827,6 +841,7 @@ class BatchTab(ctk.CTkFrame):
         self._nbs_batch_dest_browse_button.configure(state="normal" if enabled else "disabled")
         self._nbs_batch_download_button.configure(state="normal" if enabled else "disabled")
         self._nbs_batch_load_csv_button.configure(state="normal" if enabled else "disabled")
+        self._nbs_batch_compare_button.configure(state="normal" if enabled else "disabled")
         if enabled:
             self._update_nbs_batch_run_button_state()
         else:

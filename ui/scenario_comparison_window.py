@@ -35,15 +35,18 @@ from scenarios.comparison_export import (
     export_hru_group_comparison,
     export_hru_point_comparison,
     export_rch_comparison,
+    export_sub_comparison,
 )
 from swat_io.hru_output_parser import HRU_OUTPUT_VARIABLE_COLUMNS
 from swat_io.rch_parser import RCH_VARIABLE_COLUMNS
+from swat_io.sub_output_parser import SUB_VARIABLE_COLUMNS
 
 from .tasks import run_in_background
 from .variable_checklist import VariableChecklist
 from .widgets import ReadOnlyField, palette, style_combobox
 
 _SOURCE_RCH = "rch"
+_SOURCE_SUB = "sub"
 _SOURCE_HRU = "hru"
 _HRU_MODE_POINT = "point"
 _HRU_MODE_GROUP = "group"
@@ -135,6 +138,7 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
 
         self._source_label_to_key = {
             config.text("scenario_comparison_window.source_rch"): _SOURCE_RCH,
+            config.text("scenario_comparison_window.source_sub"): _SOURCE_SUB,
             config.text("scenario_comparison_window.source_hru"): _SOURCE_HRU,
         }
         self._source_selector = ctk.CTkSegmentedButton(
@@ -148,6 +152,7 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
         row += 1
 
         self._rch_panel = self._build_rch_panel(body)
+        self._sub_panel = self._build_sub_panel(body)
         self._hru_panel = self._build_hru_panel(body)
 
         separator_2 = ctk.CTkFrame(body, height=1, fg_color=colors.get("border"))
@@ -178,6 +183,26 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
         self._rch_checklist = VariableChecklist(panel, config, rch_options, height=_CHECKLIST_HEIGHT_LARGE)
         self._rch_checklist.pack(fill="x")
         self._add_select_all_clear(panel, self._rch_checklist)
+
+        return panel
+
+    def _build_sub_panel(self, master: ctk.CTkBaseClass) -> ctk.CTkFrame:
+        config = self._config
+        colors = self._colors
+        panel = ctk.CTkFrame(master, fg_color="transparent")
+
+        label = ctk.CTkLabel(
+            panel,
+            text=config.text("scenario_comparison_window.sub_variables_label"),
+            text_color=colors.get("text_primary"),
+            anchor="w",
+        )
+        label.pack(anchor="w", pady=(0, 4))
+
+        sub_options = [(code, config.text(f"sub_var.{code}")) for code in SUB_VARIABLE_COLUMNS]
+        self._sub_checklist = VariableChecklist(panel, config, sub_options, height=_CHECKLIST_HEIGHT_LARGE)
+        self._sub_checklist.pack(fill="x")
+        self._add_select_all_clear(panel, self._sub_checklist)
 
         return panel
 
@@ -375,12 +400,12 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
 
     def _refresh_source_panels(self) -> None:
         source_key = self._source_label_to_key[self._source_selector.get()]
-        if source_key == _SOURCE_RCH:
-            self._hru_panel.grid_forget()
-            self._rch_panel.grid(row=self._panels_row, column=0, sticky="ew")
-        else:
-            self._rch_panel.grid_forget()
-            self._hru_panel.grid(row=self._panels_row, column=0, sticky="ew")
+        panels = {_SOURCE_RCH: self._rch_panel, _SOURCE_SUB: self._sub_panel, _SOURCE_HRU: self._hru_panel}
+        for key, panel in panels.items():
+            if key == source_key:
+                panel.grid(row=self._panels_row, column=0, sticky="ew")
+            else:
+                panel.grid_forget()
 
     def _refresh_hru_mode_panels(self) -> None:
         mode_key = self._hru_mode_label_to_key[self._hru_mode_selector.get()]
@@ -482,6 +507,14 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
                 self._set_status(config.text("scenario_comparison_window.no_variables_hint"), error=True)
                 return
             self._run_export(lambda: export_rch_comparison(self._batch_dir, variables))
+            return
+
+        if source_key == _SOURCE_SUB:
+            variables = self._sub_checklist.selected()
+            if not variables:
+                self._set_status(config.text("scenario_comparison_window.no_variables_hint"), error=True)
+                return
+            self._run_export(lambda: export_sub_comparison(self._batch_dir, variables))
             return
 
         variables = self._hru_checklist.selected()

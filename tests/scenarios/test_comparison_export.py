@@ -13,11 +13,13 @@ from scenarios.comparison_export import (
     export_hru_group_comparison,
     export_hru_point_comparison,
     export_rch_comparison,
+    export_sub_comparison,
     load_hru_variable_aggregation,
     scenario_label,
 )
 from swat_io.hru_output_parser import HRU_OUTPUT_VARIABLE_COLUMNS, _TABLE, hru_output_db_path
 from swat_io.rch_parser import RCH_VARIABLE_COLUMNS, export_rch_timeseries_csvs, rch_timeseries_dir
+from swat_io.sub_output_parser import SUB_VARIABLE_COLUMNS, export_sub_timeseries_csvs, sub_timeseries_dir
 
 # -- helpers de fixtures ------------------------------------------------------
 
@@ -44,6 +46,16 @@ def _write_rch_fixture(scenario_dir: Path, rows: list[dict]) -> None:
             df[col] = 0.0
     df["date"] = pd.to_datetime(df["date"])
     export_rch_timeseries_csvs(df[columns], rch_timeseries_dir(scenario_dir))
+
+
+def _write_sub_fixture(scenario_dir: Path, rows: list[dict]) -> None:
+    columns = ["date", "sub"] + SUB_VARIABLE_COLUMNS
+    df = pd.DataFrame(rows)
+    for col in columns:
+        if col not in df.columns:
+            df[col] = 0.0
+    df["date"] = pd.to_datetime(df["date"])
+    export_sub_timeseries_csvs(df[columns], sub_timeseries_dir(scenario_dir))
 
 
 def _write_hru_db(scenario_dir: Path, rows: list[dict]) -> Path:
@@ -144,6 +156,50 @@ def test_export_rch_comparison_raises_without_organized_output(tmp_path: Path):
 
     with pytest.raises(ComparisonExportError):
         export_rch_comparison(tmp_path, ["FLOW_OUT"])
+
+
+# -- SUB comparison ---------------------------------------------------------
+
+
+def test_export_sub_comparison_combines_subbasins_and_scenarios(tmp_path: Path):
+    s10 = _make_scenario(tmp_path, "scenario_10pct")
+    s20 = _make_scenario(tmp_path, "scenario_20pct")
+
+    _write_sub_fixture(
+        s10,
+        [
+            {"date": "2017-01-01", "sub": 1, "PRECIP": 5.0},
+            {"date": "2017-01-01", "sub": 2, "PRECIP": 8.0},
+        ],
+    )
+    _write_sub_fixture(
+        s20,
+        [
+            {"date": "2017-01-01", "sub": 1, "PRECIP": 4.0},
+            {"date": "2017-01-01", "sub": 2, "PRECIP": 7.0},
+        ],
+    )
+
+    written = export_sub_comparison(tmp_path, ["PRECIP"])
+
+    assert len(written) == 1
+    result = pd.read_csv(written[0])
+    assert list(result.columns) == ["date", "sub", "scenario_10pct", "scenario_20pct"]
+    result = result.sort_values("sub").reset_index(drop=True)
+    assert result["scenario_10pct"].tolist() == pytest.approx([5.0, 8.0])
+    assert result["scenario_20pct"].tolist() == pytest.approx([4.0, 7.0])
+
+
+def test_export_sub_comparison_raises_without_scenarios(tmp_path: Path):
+    with pytest.raises(ComparisonExportError):
+        export_sub_comparison(tmp_path, ["PRECIP"])
+
+
+def test_export_sub_comparison_raises_without_organized_output(tmp_path: Path):
+    _make_scenario(tmp_path, "scenario_10pct")
+
+    with pytest.raises(ComparisonExportError):
+        export_sub_comparison(tmp_path, ["PRECIP"])
 
 
 # -- HRU puntual ------------------------------------------------------------
