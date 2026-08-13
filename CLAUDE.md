@@ -527,12 +527,20 @@ vez de CSV — ver esa pestaña más abajo.
   elegida en la pestaña, la ventana arranca con esa carpeta precargada
   (`initial_batch_dir`), pero se puede apuntar a otra.
 
-  Tres modos, todos produciendo **un archivo por variable** con una
+  Cuatro modos, todos produciendo **un archivo por variable** con una
   columna por escenario (el eje que se quiere comparar) — pedido explícito
   del usuario, para no tener que pegar CSVs a mano:
   - **RCH**: siempre todos los reach de la cuenca juntos (columnas `date,
     reach, <escenario...>`) — un reach ya es su propia unidad espacial, sin
     agregación.
+  - **SUB** (agregado 2026-08-13, pedido explícito del usuario tras notar
+    que la ventana se había quedado sin este modo cuando se agregó
+    Results/.sub el 2026-08-11): mismo criterio que RCH pero sobre
+    `output.sub` — siempre todas las subcuencas de la cuenca juntas
+    (columnas `date, sub, <escenario...>`), sin agregación.
+    `export_sub_comparison` reutiliza `swat_io.sub_output_parser` tal cual
+    (`read_sub_timeseries_dir`/`sub_timeseries_dir`), mismo shape que
+    `export_rch_comparison`.
   - **HRU puntual**: una única subcuenca+HRU (columnas `date,
     <escenario...>`).
   - **HRU agrupado** (ej. "todas las HRU de bosque"): filtro por
@@ -561,8 +569,8 @@ vez de CSV — ver esa pestaña más abajo.
   para que se corrija ahí, sin tocar código, si alguna clasificación no
   queda bien (`scenarios.comparison_export.load_hru_variable_aggregation`).
 
-  El botón "Export selected variables..." de HRU Results y los dos
-  checklists (RCH/HRU) de esta ventana comparten el mismo widget
+  El botón "Export selected variables..." de HRU Results y los tres
+  checklists (RCH/SUB/HRU) de esta ventana comparten el mismo widget
   (`ui/variable_checklist.py`, checkboxes con scroll + Select all/Clear).
 
   Corre en hilo de fondo (`ui.tasks.run_in_background`) por si implica leer
@@ -670,6 +678,16 @@ vez de CSV — ver esa pestaña más abajo.
   `TabBar`/`CTkScrollableFrame`). El log de cobertura simple pasó a altura
   fija (`height=200`) en vez de expandirse, ya que dentro de un scroll no
   tiene sentido pedirle a una fila que "llene el espacio restante".
+
+  **Botón "Compare scenarios..." propio de esta tarjeta** (2026-08-13,
+  pedido explícito del usuario: la ventana ya existía para el batch de
+  cobertura pero no había forma de abrirla precargada con el destino de
+  este batch): abre la misma `ScenarioComparisonWindow` de arriba, pero
+  con `initial_batch_dir=self._nbs_batch_destination_dir` en vez del
+  destino del batch de cobertura — la ventana en sí no cambió, sigue
+  siendo genérica sobre cualquier carpeta de batch vía su propio Browse.
+  Se deshabilita mientras corre esta tarjeta, igual que el resto de sus
+  controles (`_set_nbs_batch_controls_enabled`).
 
 - **Pestaña NbS** (`ui/tab_nbs.py` + `ui/nbs_wizard_window.py` +
   `ui/nbs_operation_dialog.py` + `scenarios/nbs.py` + `scenarios/nbs_analysis.py`
