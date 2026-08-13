@@ -16,6 +16,38 @@ _PLACEHOLDER_VALUE = "—"  # em dash: valor aún no calculado
 _COMBOBOX_STYLE_NAME = "Swat.TCombobox"
 
 
+def _patch_ctk_scrollable_frame_wheel_crash() -> None:
+    """Workaround de un bug real de customtkinter (visto contra la app real,
+    2026-08-13): ``CTkScrollableFrame._mouse_wheel_all`` pasa ``event.widget``
+    directo a ``_check_if_valid_scroll``, que asume que siempre es un objeto
+    tkinter con ``.master``. Tkinter en cambio entrega un string cuando el
+    widget bajo el mouse no tiene wrapper Python -- pasa con sub-widgets
+    internos de ``ttk.Combobox``/``ttk.Treeview`` y con el canvas interno de
+    ``FigureCanvasTkAgg`` (matplotlib), todos presentes en esta app dentro
+    de pestañas con ``CTkScrollableFrame`` (ver CLAUDE.md, sección sobre la
+    barra de pestañas). Sin este parche, mover la rueda del mouse sobre
+    esos widgets tira ``AttributeError: 'str' object has no attribute
+    'master'`` en cada evento de scroll. Se parcha en tiempo de ejecución
+    (no se edita site-packages) para que el fix sobreviva a reinstalar
+    dependencias -- mismo motivo por el que este módulo ya trae otro
+    workaround de CTk (ver ``bind_responsive_wraplength``). Idempotente por
+    construcción: el módulo solo se importa una vez por proceso."""
+    original = ctk.CTkScrollableFrame._check_if_valid_scroll
+
+    def _check_if_valid_scroll_safe(self, widget):
+        if isinstance(widget, str):
+            try:
+                widget = self._parent_canvas.nametowidget(widget)
+            except Exception:  # noqa: BLE001 - resolver el nombre puede fallar de varias formas (TclError, KeyError); cualquier falla acá significa "no es un scroll válido"
+                return False
+        return original(self, widget)
+
+    ctk.CTkScrollableFrame._check_if_valid_scroll = _check_if_valid_scroll_safe
+
+
+_patch_ctk_scrollable_frame_wheel_crash()
+
+
 def palette(config: ConfigManager) -> dict:
     return config.theme.get("AppPalette", {})
 
