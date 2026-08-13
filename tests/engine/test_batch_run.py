@@ -138,6 +138,28 @@ def test_writes_batch_report_per_scenario(
 
     report_path = destination_dir / "scenario_20pct" / "tool_outputs" / BATCH_REPORT_FILENAME
     assert report_path.is_file()
+    content = report_path.read_text(encoding="utf-8")
+    assert "TOTAL" in content
+    assert "hru_count_changed" in content
+
+
+def test_writes_batch_summary_across_scenarios(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reference_project_dir: Path,
+    swat_executable: Path,
+    batch_config: LandCoverBatchConfig,
+):
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _FakePopen(a[0], returncode=0))
+    destination_dir = tmp_path / "batch_out"
+
+    run_land_cover_batch(reference_project_dir, destination_dir, batch_config, swat_executable, "swatUser.exe")
+
+    summary_path = destination_dir / "land_cover_batch_summary.csv"
+    assert summary_path.is_file()
+    content = summary_path.read_text(encoding="utf-8")
+    assert "scenario_20pct" in content
+    assert "scenario_90pct" in content
 
 
 def test_calls_post_processing_for_each_successful_scenario(

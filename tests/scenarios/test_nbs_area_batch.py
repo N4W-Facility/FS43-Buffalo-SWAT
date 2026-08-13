@@ -91,9 +91,9 @@ def test_report_has_a_row_per_subbasin_source_with_deficit(tmp_path: Path):
 
     assert report_path.is_file()
     df = pd.read_csv(report_path)
-    assert set(df["subbasin"]) == {1, 2}
+    assert set(df["subbasin"]) == {"1", "2", "TOTAL"}
 
-    row1 = df[df["subbasin"] == 1].iloc[0]
+    row1 = df[df["subbasin"] == "1"].iloc[0]
     assert row1["source_lulc"] == "FRST"
     assert row1["requested_ha"] == pytest.approx(50.0)
     assert row1["applied_ha"] == pytest.approx(30.0)
@@ -101,9 +101,16 @@ def test_report_has_a_row_per_subbasin_source_with_deficit(tmp_path: Path):
     assert row1["hru_count"] == 2
     assert row1["target_pct"] == pytest.approx(20.0)
 
-    row2 = df[df["subbasin"] == 2].iloc[0]
+    row2 = df[df["subbasin"] == "2"].iloc[0]
     assert row2["status"] == "skipped"
     assert "ninguna HRU" in row2["notes"]
+
+    total_row = df[df["subbasin"] == "TOTAL"].iloc[0]
+    assert total_row["status"] == "summary"
+    assert total_row["requested_ha"] == pytest.approx(50.0)
+    assert total_row["applied_ha"] == pytest.approx(30.0)
+    assert total_row["deficit_ha"] == pytest.approx(20.0)
+    assert total_row["hru_count"] == 2
 
 
 def test_output_organize_options_default_all_true():

@@ -29,6 +29,23 @@ def test_create_working_scenario_copies_whole_reference_folder(tmp_path: Path) -
     assert reference_pnd.wet_fr == 0.2
 
 
+def test_create_working_scenario_excludes_reference_tool_outputs(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "Buffalo_calibrated_annual"
+    make_synthetic_txtinout(reference_dir, {1: {"WET_FR": 0.2}})
+    tool_outputs_dir = reference_dir / "tool_outputs"
+    tool_outputs_dir.mkdir()
+    (tool_outputs_dir / "wetland_summary.csv").write_text("subbasin,wet_fr\n1,0.2\n", encoding="utf-8")
+    (tool_outputs_dir / "activity_log.txt").write_text("[irrelevant reference-project log]\n", encoding="utf-8")
+    project_dir = tmp_path / "workspace" / "Buffalo"
+    project_dir.mkdir(parents=True)
+
+    scenario_dir = create_working_scenario(project_dir, reference_dir, "Buffalo_WET_MS_annual")
+
+    assert not (scenario_dir / "tool_outputs").exists()
+    # el resto de la carpeta de referencia sí se copia normalmente
+    assert (scenario_dir / "TxtInOut" / "000010000.pnd").exists()
+
+
 def test_create_working_scenario_reports_progress(tmp_path: Path) -> None:
     reference_dir = tmp_path / "Buffalo_calibrated_annual"
     make_synthetic_txtinout(reference_dir, {1: {"WET_FR": 0.2}, 2: {"WET_FR": 0.0}})

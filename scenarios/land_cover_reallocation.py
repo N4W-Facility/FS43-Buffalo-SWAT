@@ -55,6 +55,11 @@ class SubbasinReallocationResult:
     current_target_pct: float
     new_hru_fr: dict[int, float] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # Puntos porcentuales por debajo de target_pct que no se pudieron cubrir
+    # por falta de área donante disponible (0.0 si se aplicó completo o si
+    # el estado es "skipped") -- número explícito para que un reporte
+    # (engine.batch_run) no tenga que parsear el texto libre de `notes`.
+    deficit_pct: float = 0.0
 
 
 def _hru_fr(hru_files: dict[int, HRUFile], hru_id: int) -> float:
@@ -168,7 +173,9 @@ def plan_subbasin_reallocation(
             new_hru_fr[hid] = hru_fraction - share
         remaining -= take
 
+    deficit_pct = 0.0
     if remaining > tolerance:
+        deficit_pct = remaining * 100
         notes.append(
             f"Subbasin {subbasin}: short by {remaining * 100:.4f} percentage points of available "
             "donor area (possible rounding drift in HRU_FR); the maximum possible was applied."
@@ -201,6 +208,7 @@ def plan_subbasin_reallocation(
         current_target_pct=current_target_pct,
         new_hru_fr=new_hru_fr,
         notes=notes,
+        deficit_pct=deficit_pct,
     )
 
 

@@ -169,6 +169,19 @@ def test_runs_series_independently_from_base(
     assert results[1].total_deficit_ha == pytest.approx(40.0)
     assert results[0].applied_count == 1
     assert results[1].applied_count == 1
+    # selected_ha es el área real de la(s) HRU completa(s) elegida(s) (60 ha,
+    # no se puede partir), no el área pedida -- por eso ambos pasos aplican
+    # 60 ha: al 50% alcanza y sobra (0 déficit), al 100% no alcanza (déficit 40).
+    assert results[0].total_requested_ha == pytest.approx(50.0)
+    assert results[0].total_applied_ha == pytest.approx(60.0)
+    assert results[1].total_requested_ha == pytest.approx(100.0)
+    assert results[1].total_applied_ha == pytest.approx(60.0)
+
+    summary_path = destination_dir / "nbs_area_batch_summary.csv"
+    assert summary_path.is_file()
+    summary_df = pd.read_csv(summary_path)
+    assert list(summary_df["scenario_dir"]) == ["scenario_50pct", "scenario_100pct"]
+    assert summary_df.loc[summary_df["scenario_dir"] == "scenario_100pct", "total_applied_ha"].iloc[0] == pytest.approx(60.0)
 
 
 def test_never_modifies_reference_project(

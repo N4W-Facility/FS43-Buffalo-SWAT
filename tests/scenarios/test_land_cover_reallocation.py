@@ -201,6 +201,21 @@ def test_insufficient_donor_area_applies_best_effort_and_reports_note():
     assert round(result.new_hru_fr[1], 10) == 0.15
     assert len(result.notes) == 1
     assert "short by" in result.notes[0]
+    # Pidió 50% - 10% actual = 40 puntos porcentuales; PAST solo tenía 5.
+    assert round(result.deficit_pct, 4) == 35.0
+
+
+def test_deficit_pct_is_zero_when_fully_applied():
+    hru_files = _subbasin(
+        _hru(1, "FRST", 0.10),
+        _hru(2, "PAST", 0.90),
+    )
+
+    result = plan_subbasin_reallocation(
+        1, hru_files, target_lulc="FRST", target_pct=30, donor_priority=["PAST"]
+    )
+
+    assert result.deficit_pct == 0.0
 
 
 def test_plan_batch_reallocation_runs_each_subbasin_independently_and_sorted():

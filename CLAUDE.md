@@ -479,8 +479,22 @@ vez de CSV — ver esa pestaña más abajo.
   `<destino>/scenario_<pct>pct/` (reutiliza
   `engine.configure.create_working_scenario`, así la copia queda con
   `TxtInOut/` directo, lista para abrirse como proyecto en la app sin
-  pasos manuales — pedido explícito del usuario); calcula el plan de
-  reasignación y lo escribe en los `.hru` reales de esa copia
+  pasos manuales — pedido explícito del usuario). Esa copia excluye
+  `tool_outputs/` del proyecto de referencia (`_EXCLUDED_TOP_LEVEL_DIRS` en
+  `engine/configure.py`, corregido 2026-08-13 a pedido del usuario): antes
+  `create_working_scenario` copiaba la carpeta entera con `shutil.copytree`
+  sin excepciones, así que cada copia de escenario arrancaba con los
+  resúmenes/reportes/log de actividad/biblioteca de NbS **del proyecto de
+  referencia**, sin ninguna relación con el % de área aplicado en ese
+  escenario puntual — nada del pipeline de un escenario (reasignación de
+  `HRU_FR`, aplicar una NbS, organizar salidas) lee nada de
+  `tool_outputs/` de la copia antes de escribir ahí, así que excluirlo es
+  seguro: cada escenario arranca con su propio `tool_outputs/` vacío,
+  creado bajo demanda (`swat_io.tool_outputs.tool_outputs_dir`) y poblado
+  solo por lo que ese escenario puntual genere. Mismo motivo por el que
+  `engine.nbs_area_batch_run` reutiliza la misma función sin cambios
+  propios. Después de copiar, calcula el plan de reasignación y lo
+  escribe en los `.hru` reales de esa copia
   (`scenarios.hru_draft.write_hru_values`, reutilizado tal cual); ejecuta
   swat2012.exe sobre la copia (`engine.run.run_scenario`, reutilizado tal
   cual); y corre automáticamente el mismo post-procesamiento que hoy el
@@ -494,11 +508,31 @@ vez de CSV — ver esa pestaña más abajo.
   `.sub`; los tres tildados por default preserva el comportamiento previo.
   Cada checkbox además exige que el archivo de salida correspondiente
   exista, igual que antes). Escribe además un reporte por escenario
-  (`tool_outputs/batch_report.json`: qué subcuencas se modificaron y
-  cuáles se omitieron y por qué). Un fallo puntual (copia, cálculo, SWAT, o
-  post-procesamiento) en un paso de la serie no aborta el batch completo —
-  queda registrado como error en ese paso y el batch sigue con el
-  siguiente.
+  (`tool_outputs/batch_report.csv`, reescrito 2026-08-13 a pedido del
+  usuario — antes era JSON: quería poder abrirlo directo en Excel y ver de
+  un vistazo cuántas subcuencas se aplicaron completas, cuántas con
+  déficit de área donante, y cuántas se omitieron y por qué, en vez de que
+  eso quedara enterrado en notas de texto libre. Una fila por subcuenca
+  — `status`, `current_pct_before`, `deficit_pct`, `hru_count_changed`,
+  `notes` — más una fila `TOTAL` con los agregados del paso
+  (`engine.batch_run._batch_step_totals`, reutilizada también por el log
+  en vivo y por `activity_log.txt` para que las tres salidas nunca
+  diverjan). `SubbasinReallocationResult.deficit_pct`
+  (`scenarios/land_cover_reallocation.py`) expone ese número
+  explícitamente — antes solo existía como texto libre dentro de `notes`
+  ("short by X percentage points..."), sin poder usarse en un reporte
+  tabular). Al terminar la serie completa también escribe
+  `<destino>/land_cover_batch_summary.csv`, una fila por paso de la serie
+  (subcuencas aplicadas/con déficit/omitidas y HRU tocadas por escenario),
+  para comparar escenarios entre sí sin abrir cada carpeta — mismo patrón
+  que `nbs_area_batch_summary.csv` de la tarjeta "NbS area batch" más
+  abajo. El log en vivo también gana una línea por subcuenca omitida o
+  aplicada con déficit durante la corrida (antes el log en vivo del batch
+  de cobertura solo mostraba progreso por paso, nunca detalle por
+  subcuenca — a diferencia de "NbS area batch", que ya lo hacía). Un fallo
+  puntual (copia, cálculo, SWAT, o post-procesamiento) en un paso de la
+  serie no aborta el batch completo — queda registrado como error en ese
+  paso y el batch sigue con el siguiente.
 
   Sin una lista curada de coberturas/pendientes/suelos válidos (a
   diferencia de Wetlands y sus 20 campos fijos), el usuario no tiene forma
@@ -650,9 +684,24 @@ vez de CSV — ver esa pestaña más abajo.
   en `tool_outputs/nbs_area_batch_report.csv` de esa copia de escenario —
   una fila por subcuenca/cobertura fuente con área pedida/aplicada/déficit,
   más una fila por subcuenca omitida por motivo estructural — sin `.sub` o
-  sin ninguna HRU, eso sí sigue sin aplicarse nunca). El reporte por HRU de
-  siempre (`scenarios.nbs_apply.write_apply_report_csv`) también se escribe
-  en cada paso, igual que cualquier otro Apply de NbS.
+  sin ninguna HRU, eso sí sigue sin aplicarse nunca — más una fila `TOTAL`
+  con los agregados de todo el paso, agregada 2026-08-13 a pedido del
+  usuario: quería el total de hectáreas aplicadas por escenario, no solo
+  el desglose por subcuenca/cobertura. Esos agregados
+  (`scenarios.nbs_area_batch.area_batch_step_totals` — hectáreas
+  pedidas/aplicadas/en déficit, HRU tocadas, subcuencas aplicadas
+  completas/con déficit/omitidas) se calculan en un único lugar reutilizado
+  por la fila `TOTAL`, el log en vivo, y `activity_log.txt`, para que las
+  tres salidas nunca diverjan entre sí). El reporte por HRU de siempre
+  (`scenarios.nbs_apply.write_apply_report_csv`) también se escribe en
+  cada paso, igual que cualquier otro Apply de NbS. Al terminar la serie
+  completa se escribe además `<destino>/nbs_area_batch_summary.csv`
+  (`scenarios.nbs_area_batch.write_area_batch_summary_csv`), una fila por
+  paso de la serie con esos mismos agregados — para comparar cuántas
+  hectáreas se aplicaron en cada escenario del batch sin tener que abrir
+  cada carpeta y su reporte individual. Mismo patrón que
+  `land_cover_batch_summary.csv` del batch de cobertura simple (ver más
+  arriba).
 
   Salidas a organizar seleccionables (`scenarios.nbs_area_batch.OutputOrganizeOptions`,
   tres checkboxes output.rch/.sub/.hru, los tres tildados por default —
@@ -1025,8 +1074,9 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 
 Pedido explícito del usuario (2026-08-13): quería poder ver, en un solo
 lugar, qué hizo la app durante toda la vida de un proyecto — no solo los
-reportes puntuales que ya escriben algunas features (`batch_report.json`,
-`nbs_area_batch_report.csv`, `nbs_apply_report_*.csv`), sino una traza
+reportes puntuales que ya escriben algunas features (`batch_report.csv`,
+`land_cover_batch_summary.csv`, `nbs_area_batch_report.csv`,
+`nbs_area_batch_summary.csv`, `nbs_apply_report_*.csv`), sino una traza
 cronológica de **toda** acción relevante. `log_action(project_dir,
 category, message)` agrega una línea `[timestamp] [CATEGORY] message` a
 `tool_outputs/activity_log.txt` — texto plano, append-only, nunca se

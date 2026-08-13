@@ -42,6 +42,8 @@ from .nbs_mass_apply import MassAreaAllocationResult, SubbasinAreaAllocation
 
 _PCT_SEPARATOR = ","
 _STEP_REPORT_FILENAME = "nbs_area_batch_report.csv"
+_BATCH_SUMMARY_FILENAME = "nbs_area_batch_summary.csv"
+_DEFICIT_TOLERANCE = 1e-6
 
 
 def parse_pct_series_text(raw: str) -> list[float]:
@@ -102,6 +104,32 @@ class OutputOrganizeOptions:
     hru: bool = True
 
 
+def area_batch_step_totals(result: MassAreaAllocationResult) -> dict:
+    """Agregados de un paso de la serie -- cuántas hectáreas totales se
+    pidieron/aplicaron/quedaron en déficit, y cuántas subcuencas quedaron
+    completas/con déficit/omitidas. Reutilizado por el reporte CSV del
+    paso (fila TOTAL), el log en vivo, activity_log.txt, y el resumen
+    entre escenarios -- un solo lugar que define estos números para que
+    las cuatro salidas nunca diverjan entre sí. Pedido explícito del
+    usuario, 2026-08-13: quería el total de hectáreas aplicadas por
+    escenario, no solo el desglose por subcuenca/cobertura fuente."""
+    total_requested_ha = sum(source.requested_ha for plan in result.plans for source in plan.by_source)
+    total_applied_ha = sum(source.selected_ha for plan in result.plans for source in plan.by_source)
+    total_deficit_ha = sum(source.deficit_ha for plan in result.plans for source in plan.by_source)
+    total_hru_count = sum(len(source.selected_hru_ids) for plan in result.plans for source in plan.by_source)
+    subbasins_full = sum(1 for plan in result.plans if plan.total_deficit_ha <= _DEFICIT_TOLERANCE)
+    subbasins_partial = sum(1 for plan in result.plans if plan.total_deficit_ha > _DEFICIT_TOLERANCE)
+    return {
+        "total_requested_ha": total_requested_ha,
+        "total_applied_ha": total_applied_ha,
+        "total_deficit_ha": total_deficit_ha,
+        "total_hru_count": total_hru_count,
+        "subbasins_applied_full": subbasins_full,
+        "subbasins_applied_with_deficit": subbasins_partial,
+        "subbasins_skipped": len(result.skipped),
+    }
+
+
 def write_area_batch_step_report_csv(scenario_dir: str | Path, pct: float, result: MassAreaAllocationResult) -> Path:
     """Reporte de área por paso de la serie, en ``tool_outputs/`` de esa
     copia de escenario -- pedido explícito del usuario, 2026-08-12: "los
@@ -147,6 +175,25 @@ def write_area_batch_step_report_csv(scenario_dir: str | Path, pct: float, resul
             }
         )
 
+    totals = area_batch_step_totals(result)
+    rows.append(
+        {
+            "target_pct": pct,
+            "subbasin": "TOTAL",
+            "source_lulc": "",
+            "requested_ha": round(totals["total_requested_ha"], 4),
+            "applied_ha": round(totals["total_applied_ha"], 4),
+            "deficit_ha": round(totals["total_deficit_ha"], 4),
+            "hru_count": totals["total_hru_count"],
+            "status": "summary",
+            "notes": (
+                f"{totals['subbasins_applied_full']} subbasin(s) applied in full, "
+                f"{totals['subbasins_applied_with_deficit']} with deficit, "
+                f"{totals['subbasins_skipped']} skipped."
+            ),
+        }
+    )
+
     columns = [
         "target_pct", "subbasin", "source_lulc", "requested_ha", "applied_ha", "deficit_ha",
         "hru_count", "status", "notes",
@@ -154,5 +201,22 @@ def write_area_batch_step_report_csv(scenario_dir: str | Path, pct: float, resul
     df = pd.DataFrame(rows, columns=columns)
     dest = Path(scenario_dir) / "tool_outputs" / _STEP_REPORT_FILENAME
     dest.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(dest, index=False)
+    return dest
+
+
+def write_area_batch_summary_csv(destination_dir: str | Path, rows: list[dict]) -> Path:
+    """Un resumen del batch completo, una fila por paso de la serie -- para
+    comparar escenarios entre sí (cuántas hectáreas totales se aplicaron
+    en cada uno) sin abrir cada carpeta y su nbs_area_batch_report.csv
+    individual (pedido explícito del usuario, 2026-08-13). Vive en la raíz
+    de destination_dir, no dentro de ninguna copia de escenario puntual --
+    mismo patrón que engine.batch_run._write_batch_summary_csv."""
+    columns = [
+        "target_pct", "scenario_dir", "status", "total_requested_ha", "total_applied_ha", "total_deficit_ha",
+        "total_hru_count", "subbasins_applied_full", "subbasins_applied_with_deficit", "subbasins_skipped", "error",
+    ]
+    df = pd.DataFrame(rows, columns=columns)
+    dest = Path(destination_dir) / _BATCH_SUMMARY_FILENAME
     df.to_csv(dest, index=False)
     return dest

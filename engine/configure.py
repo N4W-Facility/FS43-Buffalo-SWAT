@@ -10,9 +10,21 @@ from swat_io.pnd_parser import write_wetland_params
 
 ProgressCallback = Callable[[int, int], None]
 
+# tool_outputs/ es donde la app guarda resultados derivados del proyecto de
+# referencia (resúmenes, reportes, biblioteca de NbS, el log de actividad)
+# -- nada de eso describe el escenario nuevo, así que no debe copiarse: cada
+# escenario arranca con su propio tool_outputs/ vacío, poblado solo por lo
+# que ese escenario puntual genere (ver swat_io.tool_outputs.tool_outputs_dir,
+# que lo crea bajo demanda si no existe).
+_EXCLUDED_TOP_LEVEL_DIRS = {"tool_outputs"}
+
 
 def _count_files(directory: Path) -> int:
-    return sum(1 for path in directory.rglob("*") if path.is_file())
+    return sum(
+        1
+        for path in directory.rglob("*")
+        if path.is_file() and path.relative_to(directory).parts[0] not in _EXCLUDED_TOP_LEVEL_DIRS
+    )
 
 
 def create_working_scenario(
@@ -45,7 +57,14 @@ def create_working_scenario(
         if on_progress is not None:
             on_progress(copied, total_files)
 
-    shutil.copytree(reference_dir, scenario_dir, copy_function=_copy_with_progress)
+    def _ignore_top_level_excluded(dir_path: str, names: list[str]) -> set[str]:
+        if Path(dir_path) != reference_dir:
+            return set()
+        return _EXCLUDED_TOP_LEVEL_DIRS & set(names)
+
+    shutil.copytree(
+        reference_dir, scenario_dir, copy_function=_copy_with_progress, ignore=_ignore_top_level_excluded
+    )
     return scenario_dir
 
 

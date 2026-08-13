@@ -50,7 +50,13 @@ from generar_resumen_humedales import generar_resumen_humedales
 from scenarios.activity_log import log_action
 from scenarios.nbs import NbSDefinition
 from scenarios.nbs_apply import apply_nbs, write_apply_report_csv
-from scenarios.nbs_area_batch import OutputOrganizeOptions, scale_allocations, write_area_batch_step_report_csv
+from scenarios.nbs_area_batch import (
+    OutputOrganizeOptions,
+    area_batch_step_totals,
+    scale_allocations,
+    write_area_batch_step_report_csv,
+    write_area_batch_summary_csv,
+)
 from scenarios.nbs_mass_apply import SubbasinAreaAllocation, plan_mass_area_allocation
 from swat_io.cio_parser import parse_run_settings
 from swat_io.hru_output_parser import build_hru_output_database, hru_output_db_path
@@ -72,6 +78,8 @@ class NbSAreaScenarioResult:
     status: str  # "ok" | "error"
     error: str | None = None
     applied_count: int = 0
+    total_requested_ha: float = 0.0
+    total_applied_ha: float = 0.0
     total_deficit_ha: float = 0.0
     area_report_path: Path | None = None
 
@@ -142,6 +150,7 @@ def run_nbs_area_batch(
             on_progress(message)
 
     results: list[NbSAreaScenarioResult] = []
+    summary_rows: list[dict] = []
     total_steps = len(pct_series)
 
     for index, pct in enumerate(pct_series, start=1):
@@ -160,6 +169,7 @@ def run_nbs_area_batch(
                     target_pct=pct, scenario_dir=destination_dir / folder_name, status="error", error=str(error),
                 )
             )
+            summary_rows.append({"target_pct": pct, "scenario_dir": folder_name, "status": "error", "error": str(error)})
             report(f"{step_label}: error -- {error}")
             continue
 
@@ -170,6 +180,7 @@ def run_nbs_area_batch(
                 scenario_dir, scaled, slope_priority=slope_priority, soil_priority=soil_priority, strict=False,
             )
             area_report_path = write_area_batch_step_report_csv(scenario_dir, pct, plan_result)
+            area_totals = area_batch_step_totals(plan_result)
             for subbasin_id, reason in plan_result.skipped.items():
                 report(f"{step_label}: subbasin {subbasin_id} skipped -- {reason}")
             for plan in plan_result.plans:
@@ -181,7 +192,6 @@ def run_nbs_area_batch(
 
             targets = plan_result.targets
             applied_count = 0
-            total_deficit_ha = sum(plan.total_deficit_ha for plan in plan_result.plans)
             if targets:
                 report(f"{step_label}: applying the NbS to {len(targets)} HRU...")
                 apply_report = apply_nbs(scenario_dir, nbs, targets)
@@ -201,29 +211,61 @@ def run_nbs_area_batch(
             results.append(
                 NbSAreaScenarioResult(
                     target_pct=pct, scenario_dir=scenario_dir, status="ok",
-                    applied_count=applied_count, total_deficit_ha=total_deficit_ha,
+                    applied_count=applied_count,
+                    total_requested_ha=area_totals["total_requested_ha"],
+                    total_applied_ha=area_totals["total_applied_ha"],
+                    total_deficit_ha=area_totals["total_deficit_ha"],
                     area_report_path=area_report_path,
                 )
             )
-            report(f"{step_label}: done.")
+            report(
+                f"{step_label}: done. Applied {area_totals['total_applied_ha']:.2f}/"
+                f"{area_totals['total_requested_ha']:.2f} ha requested "
+                f"({area_totals['subbasins_applied_full']} subbasin(s) in full, "
+                f"{area_totals['subbasins_applied_with_deficit']} with deficit, "
+                f"{area_totals['subbasins_skipped']} skipped), {applied_count} HRU(s) applied "
+                f"(see {area_report_path.name})."
+            )
             log_action(
                 scenario_dir,
                 "NBS_BATCH",
                 f"NbS area batch step {folder_name} completed: nbs='{nbs.name}', "
-                f"{applied_count} HRU(s) applied, deficit={total_deficit_ha:.2f} ha.",
+                f"{applied_count} HRU(s) applied, "
+                f"{area_totals['total_applied_ha']:.2f}/{area_totals['total_requested_ha']:.2f} ha applied "
+                f"({area_totals['subbasins_applied_full']} subbasin(s) in full, "
+                f"{area_totals['subbasins_applied_with_deficit']} with deficit, "
+                f"{area_totals['subbasins_skipped']} skipped). Detailed report: '{area_report_path}'.",
+            )
+            summary_rows.append(
+                {
+                    "target_pct": pct,
+                    "scenario_dir": folder_name,
+                    "status": "ok",
+                    "total_requested_ha": area_totals["total_requested_ha"],
+                    "total_applied_ha": area_totals["total_applied_ha"],
+                    "total_deficit_ha": area_totals["total_deficit_ha"],
+                    "total_hru_count": area_totals["total_hru_count"],
+                    "subbasins_applied_full": area_totals["subbasins_applied_full"],
+                    "subbasins_applied_with_deficit": area_totals["subbasins_applied_with_deficit"],
+                    "subbasins_skipped": area_totals["subbasins_skipped"],
+                    "error": None,
+                }
             )
         except Exception as error:  # noqa: BLE001 - un paso puntual no debe abortar el batch completo
             results.append(
                 NbSAreaScenarioResult(target_pct=pct, scenario_dir=scenario_dir, status="error", error=str(error))
             )
+            summary_rows.append({"target_pct": pct, "scenario_dir": folder_name, "status": "error", "error": str(error)})
             report(f"{step_label}: error -- {error}")
             log_action(reference_project_dir, "NBS_BATCH", f"NbS area batch step {folder_name} failed: {error}")
 
+    summary_path = write_area_batch_summary_csv(destination_dir, summary_rows)
     log_action(
         reference_project_dir,
         "NBS_BATCH",
         f"Finished NbS area batch to '{destination_dir}': "
-        f"{sum(1 for r in results if r.status == 'ok')}/{len(results)} step(s) succeeded.",
+        f"{sum(1 for r in results if r.status == 'ok')}/{len(results)} step(s) succeeded. "
+        f"Summary: '{summary_path}'.",
     )
 
     return results

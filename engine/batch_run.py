@@ -26,8 +26,18 @@ módulo:
    mismo control que ya tenía "NbS area batch": default organiza los tres
    si existen, mismo motivo de siempre por el que puede faltar alguno --
    IPRINT que no genera esa salida).
-5. Escribe un reporte del escenario (subcuencas modificadas/omitidas y por
-   qué) en ``tool_outputs/batch_report.json`` de esa copia.
+5. Escribe un reporte del escenario (una fila por subcuenca: aplicada,
+   omitida y por qué, o aplicada con déficit de área donante, más una fila
+   TOTAL con los agregados del paso) en ``tool_outputs/batch_report.csv``
+   de esa copia -- CSV (no JSON, como antes de 2026-08-13), mismo formato
+   que ``scenarios.nbs_area_batch.write_area_batch_step_report_csv``,
+   pedido explícito del usuario: quería poder abrirlo directo en Excel y
+   ver de un vistazo cuántas subcuencas se aplicaron completas, cuántas
+   con déficit, y cuántas se omitieron -- antes esto quedaba enterrado en
+   notas de texto libre dentro de un JSON. Al terminar la serie completa
+   también escribe ``<destino>/land_cover_batch_summary.csv``, una fila
+   por paso de la serie, para comparar escenarios entre sí sin abrir cada
+   carpeta.
 
 Un fallo en un escenario puntual (copia, cálculo, SWAT, o
 post-procesamiento) no aborta el batch completo: queda registrado como
@@ -36,10 +46,11 @@ paso de la serie.
 """
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+import pandas as pd
 
 from engine.configure import create_working_scenario
 from engine.run import run_scenario
@@ -50,6 +61,8 @@ from scenarios.hru_draft import write_hru_values
 from scenarios.land_cover_config import LandCoverBatchConfig
 from scenarios.land_cover_reallocation import (
     STATUS_APPLIED,
+    STATUS_SKIPPED_NO_TARGET_HRU,
+    STATUS_SKIPPED_TARGET_ALREADY_MET,
     SubbasinReallocationResult,
     plan_batch_reallocation,
 )
@@ -80,7 +93,8 @@ from swat_io.sub_output_parser import (
 
 ProgressCallback = Callable[[str], None]
 
-BATCH_REPORT_FILENAME = "batch_report.json"
+BATCH_REPORT_FILENAME = "batch_report.csv"
+BATCH_SUMMARY_FILENAME = "land_cover_batch_summary.csv"
 
 
 @dataclass
@@ -128,31 +142,93 @@ def _apply_reallocation(
             write_hru_values(hru_files[hru_id], {"HRU_FR": new_fr})
 
 
-def _write_batch_report(
+_DEFICIT_TOLERANCE = 1e-6
+
+
+def _batch_step_totals(results: list[SubbasinReallocationResult]) -> dict:
+    """Agregados de un paso de la serie, reutilizados por el reporte CSV del
+    escenario, el log en vivo, activity_log.txt, y el resumen entre
+    escenarios -- un solo lugar que define qué cuenta como "aplicada
+    completa" vs. "aplicada con déficit" vs. "omitida", para que las
+    cuatro salidas nunca diverjan entre sí."""
+    applied_full = sum(1 for r in results if r.status == STATUS_APPLIED and r.deficit_pct <= _DEFICIT_TOLERANCE)
+    applied_with_deficit = sum(1 for r in results if r.status == STATUS_APPLIED and r.deficit_pct > _DEFICIT_TOLERANCE)
+    skipped_no_target = sum(1 for r in results if r.status == STATUS_SKIPPED_NO_TARGET_HRU)
+    skipped_already_met = sum(1 for r in results if r.status == STATUS_SKIPPED_TARGET_ALREADY_MET)
+    hru_count_changed = sum(len(r.new_hru_fr) for r in results)
+    return {
+        "subbasins_total": len(results),
+        "subbasins_applied_full": applied_full,
+        "subbasins_applied_with_deficit": applied_with_deficit,
+        "subbasins_skipped_no_target_hru": skipped_no_target,
+        "subbasins_skipped_target_already_met": skipped_already_met,
+        "hru_count_changed": hru_count_changed,
+    }
+
+
+def _write_batch_report_csv(
     scenario_dir: Path,
-    config: LandCoverBatchConfig,
     target_pct: float,
     results: list[SubbasinReallocationResult],
 ) -> Path:
-    payload = {
-        "target_lulc": config.target_lulc,
-        "target_pct": target_pct,
-        "donor_priority": config.donor_priority,
-        "slope_priority": config.slope_priority,
-        "soil_priority": config.soil_priority,
-        "subbasins": [
-            {
-                "subbasin": r.subbasin,
-                "status": r.status,
-                "current_target_pct": r.current_target_pct,
-                "notes": r.notes,
-            }
-            for r in results
-        ],
-    }
+    rows = [
+        {
+            "target_pct": target_pct,
+            "subbasin": r.subbasin,
+            "status": r.status,
+            "current_pct_before": round(r.current_target_pct, 4),
+            "target_pct_requested": target_pct,
+            "deficit_pct": round(r.deficit_pct, 4),
+            "hru_count_changed": len(r.new_hru_fr),
+            "notes": "; ".join(r.notes),
+        }
+        for r in results
+    ]
+
+    totals = _batch_step_totals(results)
+    rows.append(
+        {
+            "target_pct": target_pct,
+            "subbasin": "TOTAL",
+            "status": "summary",
+            "current_pct_before": None,
+            "target_pct_requested": target_pct,
+            "deficit_pct": None,
+            "hru_count_changed": totals["hru_count_changed"],
+            "notes": (
+                f"{totals['subbasins_applied_full']} applied in full, "
+                f"{totals['subbasins_applied_with_deficit']} applied with deficit, "
+                f"{totals['subbasins_skipped_no_target_hru']} skipped (no target coverage), "
+                f"{totals['subbasins_skipped_target_already_met']} skipped (target already met), "
+                f"out of {totals['subbasins_total']} subbasin(s)."
+            ),
+        }
+    )
+
+    columns = [
+        "target_pct", "subbasin", "status", "current_pct_before", "target_pct_requested",
+        "deficit_pct", "hru_count_changed", "notes",
+    ]
+    df = pd.DataFrame(rows, columns=columns)
     dest = scenario_dir / "tool_outputs" / BATCH_REPORT_FILENAME
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    df.to_csv(dest, index=False)
+    return dest
+
+
+def _write_batch_summary_csv(destination_dir: Path, rows: list[dict]) -> Path:
+    """Un resumen del batch completo, una fila por paso de la serie -- para
+    comparar escenarios entre sí sin tener que abrir cada carpeta y su
+    batch_report.csv individual (pedido explícito del usuario, 2026-08-13:
+    "cuanto más detalle mejor"). Vive en la raíz de destination_dir, no
+    dentro de ninguna copia de escenario puntual."""
+    columns = [
+        "target_pct", "scenario_dir", "status", "subbasins_applied_full", "subbasins_applied_with_deficit",
+        "subbasins_skipped_no_target_hru", "subbasins_skipped_target_already_met", "hru_count_changed", "error",
+    ]
+    df = pd.DataFrame(rows, columns=columns)
+    dest = Path(destination_dir) / BATCH_SUMMARY_FILENAME
+    df.to_csv(dest, index=False)
     return dest
 
 
@@ -227,6 +303,7 @@ def run_land_cover_batch(
             on_progress(message)
 
     results: list[ScenarioRunResult] = []
+    summary_rows: list[dict] = []
     total_steps = len(config.target_pct_series)
 
     for index, target_pct in enumerate(config.target_pct_series, start=1):
@@ -250,6 +327,7 @@ def run_land_cover_batch(
                     error=str(error),
                 )
             )
+            summary_rows.append({"target_pct": target_pct, "scenario_dir": folder_name, "status": "error", "error": str(error)})
             report(f"{step_label}: error -- {error}")
             continue
 
@@ -267,7 +345,21 @@ def run_land_cover_batch(
                 soil_priority=config.soil_priority,
             )
             _apply_reallocation(hru_files_by_subbasin, reallocation_results)
-            _write_batch_report(scenario_dir, config, target_pct, reallocation_results)
+            report_path = _write_batch_report_csv(scenario_dir, target_pct, reallocation_results)
+
+            for r in reallocation_results:
+                if r.status == STATUS_SKIPPED_NO_TARGET_HRU:
+                    report(f"{step_label}: subbasin {r.subbasin} skipped -- no HRU with the target coverage.")
+                elif r.status == STATUS_SKIPPED_TARGET_ALREADY_MET:
+                    report(
+                        f"{step_label}: subbasin {r.subbasin} skipped -- already at "
+                        f"{r.current_target_pct:.2f}% (>= {target_pct:.2f}% requested)."
+                    )
+                elif r.deficit_pct > _DEFICIT_TOLERANCE:
+                    report(
+                        f"{step_label}: subbasin {r.subbasin} applied with a deficit of "
+                        f"{r.deficit_pct:.2f} percentage points (not enough donor area)."
+                    )
 
             report(f"{step_label}: running swat2012.exe...")
             run_result = run_scenario(txtinout_dir, swat_executable, target_executable_name)
@@ -285,26 +377,50 @@ def run_land_cover_batch(
                     reallocation=reallocation_results,
                 )
             )
-            report(f"{step_label}: done.")
-            modified = sum(1 for r in reallocation_results if r.status == STATUS_APPLIED)
+            totals = _batch_step_totals(reallocation_results)
+            report(
+                f"{step_label}: done. {totals['subbasins_applied_full']}/{totals['subbasins_total']} subbasin(s) "
+                f"applied in full, {totals['subbasins_applied_with_deficit']} with deficit, "
+                f"{totals['subbasins_skipped_no_target_hru'] + totals['subbasins_skipped_target_already_met']} skipped, "
+                f"{totals['hru_count_changed']} HRU(s) changed (see {report_path.name})."
+            )
             log_action(
                 scenario_dir,
                 "BATCH",
-                f"Land-cover batch step {folder_name} completed: {modified}/{len(reallocation_results)} "
-                f"subbasin(s) modified.",
+                f"Land-cover batch step {folder_name} completed: "
+                f"{totals['subbasins_applied_full']} applied in full, "
+                f"{totals['subbasins_applied_with_deficit']} applied with deficit, "
+                f"{totals['subbasins_skipped_no_target_hru'] + totals['subbasins_skipped_target_already_met']} skipped, "
+                f"{totals['hru_count_changed']} HRU(s) changed. Detailed report: '{report_path}'.",
+            )
+            summary_rows.append(
+                {
+                    "target_pct": target_pct,
+                    "scenario_dir": folder_name,
+                    "status": "ok",
+                    "subbasins_applied_full": totals["subbasins_applied_full"],
+                    "subbasins_applied_with_deficit": totals["subbasins_applied_with_deficit"],
+                    "subbasins_skipped_no_target_hru": totals["subbasins_skipped_no_target_hru"],
+                    "subbasins_skipped_target_already_met": totals["subbasins_skipped_target_already_met"],
+                    "hru_count_changed": totals["hru_count_changed"],
+                    "error": None,
+                }
             )
         except Exception as error:  # noqa: BLE001 - un escenario no debe abortar el batch completo
             results.append(
                 ScenarioRunResult(target_pct=target_pct, scenario_dir=scenario_dir, status="error", error=str(error))
             )
+            summary_rows.append({"target_pct": target_pct, "scenario_dir": folder_name, "status": "error", "error": str(error)})
             report(f"{step_label}: error -- {error}")
             log_action(reference_project_dir, "BATCH", f"Land-cover batch step {folder_name} failed: {error}")
 
+    summary_path = _write_batch_summary_csv(destination_dir, summary_rows)
     log_action(
         reference_project_dir,
         "BATCH",
         f"Finished land-cover batch to '{destination_dir}': "
-        f"{sum(1 for r in results if r.status == 'ok')}/{len(results)} step(s) succeeded.",
+        f"{sum(1 for r in results if r.status == 'ok')}/{len(results)} step(s) succeeded. "
+        f"Summary: '{summary_path}'.",
     )
 
     return results
