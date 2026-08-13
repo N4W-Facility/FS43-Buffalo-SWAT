@@ -63,12 +63,12 @@ def parse_file_cio(path: Path | str) -> SimulationPeriod:
         n_years = int(values["NBYR"])
         start_year = int(values["IYR"])
     except KeyError as exc:
-        raise CioParseError(f"file.cio no tiene el código {exc.args[0]}") from exc
+        raise CioParseError(f"file.cio does not have the code {exc.args[0]}") from exc
     except ValueError as exc:
-        raise CioParseError(f"file.cio tiene un valor no entero para NBYR/IYR: {exc}") from exc
+        raise CioParseError(f"file.cio has a non-integer value for NBYR/IYR: {exc}") from exc
 
     if n_years < 1:
-        raise CioParseError(f"NBYR debe ser >= 1, se encontró {n_years}")
+        raise CioParseError(f"NBYR must be >= 1, found {n_years}")
 
     return SimulationPeriod(
         start_year=start_year,
@@ -90,12 +90,12 @@ def parse_run_settings(path: Path | str) -> RunSettings:
         years_to_skip = int(values["NYSKIP"])
         print_frequency = int(values["IPRINT"])
     except KeyError as exc:
-        raise CioParseError(f"file.cio no tiene el código {exc.args[0]}") from exc
+        raise CioParseError(f"file.cio does not have the code {exc.args[0]}") from exc
     except ValueError as exc:
-        raise CioParseError(f"file.cio tiene un valor no entero para NYSKIP/IPRINT: {exc}") from exc
+        raise CioParseError(f"file.cio has a non-integer value for NYSKIP/IPRINT: {exc}") from exc
 
     if not 0 <= years_to_skip < period.n_years:
-        raise CioParseError(f"NYSKIP debe estar en [0, {period.n_years}), se encontró {years_to_skip}")
+        raise CioParseError(f"NYSKIP must be in [0, {period.n_years}), found {years_to_skip}")
 
     return RunSettings(
         start_year=period.start_year,
@@ -115,11 +115,11 @@ def write_run_settings(
     """
     n_years = end_year - start_year + 1
     if n_years < 1:
-        raise ValueError(f"end_year ({end_year}) debe ser >= start_year ({start_year})")
+        raise ValueError(f"end_year ({end_year}) must be >= start_year ({start_year})")
     if not 0 <= years_to_skip < n_years:
-        raise ValueError(f"years_to_skip debe estar en [0, {n_years}), se encontró {years_to_skip}")
+        raise ValueError(f"years_to_skip must be in [0, {n_years}), found {years_to_skip}")
     if print_frequency not in _VALID_PRINT_FREQUENCIES:
-        raise ValueError(f"print_frequency debe ser uno de {_VALID_PRINT_FREQUENCIES}, se encontró {print_frequency}")
+        raise ValueError(f"print_frequency must be one of {_VALID_PRINT_FREQUENCIES}, found {print_frequency}")
 
     write_value_code_file(
         Path(path),

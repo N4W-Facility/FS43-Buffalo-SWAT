@@ -142,10 +142,10 @@ def run_nbs_area_batch(
         step_label = f"[{index}/{total_steps}] {folder_name}"
 
         try:
-            report(f"{step_label}: copiando proyecto base...")
+            report(f"{step_label}: copying base project...")
             scenario_dir = create_working_scenario(
                 destination_dir, reference_project_dir, folder_name,
-                on_progress=lambda copied, total: report(f"{step_label}: copiando ({copied}/{total})..."),
+                on_progress=lambda copied, total: report(f"{step_label}: copying ({copied}/{total})..."),
             )
         except FileExistsError as error:
             results.append(
@@ -157,38 +157,38 @@ def run_nbs_area_batch(
             continue
 
         try:
-            report(f"{step_label}: calculando área alcanzable...")
+            report(f"{step_label}: computing achievable area...")
             scaled = scale_allocations(allocations, pct)
             plan_result = plan_mass_area_allocation(
                 scenario_dir, scaled, slope_priority=slope_priority, soil_priority=soil_priority, strict=False,
             )
             area_report_path = write_area_batch_step_report_csv(scenario_dir, pct, plan_result)
             for subbasin_id, reason in plan_result.skipped.items():
-                report(f"{step_label}: subcuenca {subbasin_id} omitida -- {reason}")
+                report(f"{step_label}: subbasin {subbasin_id} skipped -- {reason}")
             for plan in plan_result.plans:
                 if plan.total_deficit_ha > 0:
                     report(
-                        f"{step_label}: subcuenca {plan.subbasin} con déficit de "
-                        f"{plan.total_deficit_ha:.2f} ha (ver {area_report_path.name})."
+                        f"{step_label}: subbasin {plan.subbasin} has a deficit of "
+                        f"{plan.total_deficit_ha:.2f} ha (see {area_report_path.name})."
                     )
 
             targets = plan_result.targets
             applied_count = 0
             total_deficit_ha = sum(plan.total_deficit_ha for plan in plan_result.plans)
             if targets:
-                report(f"{step_label}: aplicando la NbS sobre {len(targets)} HRU...")
+                report(f"{step_label}: applying the NbS to {len(targets)} HRU...")
                 apply_report = apply_nbs(scenario_dir, nbs, targets)
                 write_apply_report_csv(scenario_dir, apply_report, datetime.now())
                 applied_count = apply_report.applied_count
             else:
-                report(f"{step_label}: ningún HRU alcanzable en este paso -- se corre SWAT sin cambios de NbS.")
+                report(f"{step_label}: no HRU achievable at this step -- running SWAT without NbS changes.")
 
-            report(f"{step_label}: ejecutando swat2012.exe...")
+            report(f"{step_label}: running swat2012.exe...")
             run_result = run_scenario(scenario_dir / "TxtInOut", swat_executable, target_executable_name)
             if not run_result.success:
-                raise RuntimeError(f"swat2012.exe terminó con código {run_result.exit_code}")
+                raise RuntimeError(f"swat2012.exe exited with code {run_result.exit_code}")
 
-            report(f"{step_label}: organizando resultados...")
+            report(f"{step_label}: organizing outputs...")
             _organize_outputs(scenario_dir, output_options, report)
 
             results.append(
@@ -198,7 +198,7 @@ def run_nbs_area_batch(
                     area_report_path=area_report_path,
                 )
             )
-            report(f"{step_label}: listo.")
+            report(f"{step_label}: done.")
         except Exception as error:  # noqa: BLE001 - un paso puntual no debe abortar el batch completo
             results.append(
                 NbSAreaScenarioResult(target_pct=pct, scenario_dir=scenario_dir, status="error", error=str(error))

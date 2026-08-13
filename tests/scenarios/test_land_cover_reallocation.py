@@ -200,7 +200,7 @@ def test_insufficient_donor_area_applies_best_effort_and_reports_note():
     # Solo pudo crecer lo que PAST tenía disponible (0.05).
     assert round(result.new_hru_fr[1], 10) == 0.15
     assert len(result.notes) == 1
-    assert "faltó" in result.notes[0]
+    assert "short by" in result.notes[0]
 
 
 def test_plan_batch_reallocation_runs_each_subbasin_independently_and_sorted():

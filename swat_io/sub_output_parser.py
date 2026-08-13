@@ -90,14 +90,14 @@ def parse_sub_file(path: Path | str) -> pd.DataFrame:
         if not line.startswith(_DATA_ROW_PREFIX):
             continue
         if len(line) < min_length:
-            raise SubParseError(f"{path.name}:{line_number}: línea más corta que lo esperado ({len(line)} caracteres)")
+            raise SubParseError(f"{path.name}:{line_number}: line shorter than expected ({len(line)} characters)")
 
         try:
             sub_id = int(line[_SUB_ID_SPAN[0]:_SUB_ID_SPAN[1]].strip())
             gis = int(line[_GIS_SPAN[0]:_GIS_SPAN[1]].strip())
             mon = float(line[_MON_SPAN[0]:_MON_SPAN[1]].strip())
         except ValueError as exc:
-            raise SubParseError(f"{path.name}:{line_number}: SUB/GIS/MON no numérico ({exc})") from exc
+            raise SubParseError(f"{path.name}:{line_number}: SUB/GIS/MON not numeric ({exc})") from exc
 
         values: list[float] = []
         for start, end in _VARIABLE_COLSPECS:
@@ -105,12 +105,12 @@ def parse_sub_file(path: Path | str) -> pd.DataFrame:
             try:
                 values.append(float(token))
             except ValueError as exc:
-                raise SubParseError(f"{path.name}:{line_number}: valor no numérico ({exc})") from exc
+                raise SubParseError(f"{path.name}:{line_number}: non-numeric value ({exc})") from exc
 
         rows.append([sub_id, gis, mon, *values])
 
     if not rows:
-        raise SubParseError(f"{path.name}: no se encontró ninguna fila de datos (prefijo 'BIGSUB')")
+        raise SubParseError(f"{path.name}: no data row was found (prefix 'BIGSUB')")
 
     columns = ["sub", "gis", "mon"] + SUB_VARIABLE_COLUMNS
     df = pd.DataFrame(rows, columns=columns)
@@ -148,7 +148,7 @@ def build_sub_timeseries(df: pd.DataFrame, run_settings: RunSettings) -> pd.Data
             date_from=lambda year, day: date(year, 1, 1) + pd.Timedelta(days=day - 1),
         )
 
-    raise ValueError(f"print_frequency desconocido: {run_settings.print_frequency}")
+    raise ValueError(f"Unknown print_frequency: {run_settings.print_frequency}")
 
 
 def _assign_calendar_dates(

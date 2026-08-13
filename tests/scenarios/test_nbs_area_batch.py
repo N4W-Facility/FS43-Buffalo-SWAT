@@ -25,9 +25,9 @@ def test_parses_series_up_to_100_with_whitespace():
 
 
 def test_blank_series_raises():
-    with pytest.raises(ValueError, match="vacía"):
+    with pytest.raises(ValueError, match="empty"):
         parse_pct_series_text("")
-    with pytest.raises(ValueError, match="vacía"):
+    with pytest.raises(ValueError, match="empty"):
         parse_pct_series_text("   ")
 
 
@@ -37,9 +37,9 @@ def test_non_numeric_token_raises():
 
 
 def test_out_of_range_token_raises():
-    with pytest.raises(ValueError, match="rango"):
+    with pytest.raises(ValueError, match="out of range"):
         parse_pct_series_text("10,150")
-    with pytest.raises(ValueError, match="rango"):
+    with pytest.raises(ValueError, match="out of range"):
         parse_pct_series_text("0,50")
 
 

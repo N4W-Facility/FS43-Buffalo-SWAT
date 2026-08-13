@@ -124,7 +124,7 @@ def plan_subbasin_reallocation(
             subbasin=subbasin,
             status=STATUS_SKIPPED_NO_TARGET_HRU,
             current_target_pct=current_target_pct,
-            notes=[f"Subcuenca {subbasin}: no tiene ninguna HRU con cobertura '{target_lulc}'."],
+            notes=[f"Subbasin {subbasin}: has no HRU with coverage '{target_lulc}'."],
         )
 
     target_fraction = target_pct / 100
@@ -134,8 +134,8 @@ def plan_subbasin_reallocation(
             status=STATUS_SKIPPED_TARGET_ALREADY_MET,
             current_target_pct=current_target_pct,
             notes=[
-                f"Subcuenca {subbasin}: '{target_lulc}' ya ocupa {current_target_pct:.2f}% "
-                f"(>= {target_pct:.2f}% pedido); no se fuerza una reducción."
+                f"Subbasin {subbasin}: '{target_lulc}' already occupies {current_target_pct:.2f}% "
+                f"(>= {target_pct:.2f}% requested); no reduction is forced."
             ],
         )
 
@@ -170,9 +170,8 @@ def plan_subbasin_reallocation(
 
     if remaining > tolerance:
         notes.append(
-            f"Subcuenca {subbasin}: faltó {remaining * 100:.4f} puntos porcentuales de área "
-            "donante disponible (posible desviación de redondeo en HRU_FR); se aplicó lo "
-            "máximo posible."
+            f"Subbasin {subbasin}: short by {remaining * 100:.4f} percentage points of available "
+            "donor area (possible rounding drift in HRU_FR); the maximum possible was applied."
         )
 
     growth_amount = needed - remaining

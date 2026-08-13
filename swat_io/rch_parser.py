@@ -71,16 +71,16 @@ def parse_rch_file(path: Path | str) -> pd.DataFrame:
         tokens = stripped.split()[1:]
         if len(tokens) != expected_len:
             raise RchParseError(
-                f"{path.name}:{line_number}: se esperaban {expected_len} valores tras RCH/GIS/MON, "
-                f"se encontraron {len(tokens)}"
+                f"{path.name}:{line_number}: expected {expected_len} values after RCH/GIS/MON, "
+                f"found {len(tokens)}"
             )
         try:
             rows.append([float(token) for token in tokens])
         except ValueError as exc:
-            raise RchParseError(f"{path.name}:{line_number}: valor no numérico ({exc})") from exc
+            raise RchParseError(f"{path.name}:{line_number}: non-numeric value ({exc})") from exc
 
     if not rows:
-        raise RchParseError(f"{path.name}: no se encontró ninguna fila de datos (prefijo 'REACH')")
+        raise RchParseError(f"{path.name}: no data row was found (prefix 'REACH')")
 
     columns = ["reach", "gis", "mon"] + RCH_VARIABLE_COLUMNS
     df = pd.DataFrame(rows, columns=columns)
@@ -140,7 +140,7 @@ def build_rch_timeseries(df: pd.DataFrame, run_settings: RunSettings) -> pd.Data
             date_from=lambda year, day: date(year, 1, 1) + pd.Timedelta(days=day - 1),
         )
 
-    raise ValueError(f"print_frequency desconocido: {run_settings.print_frequency}")
+    raise ValueError(f"Unknown print_frequency: {run_settings.print_frequency}")
 
 
 def _assign_calendar_dates(

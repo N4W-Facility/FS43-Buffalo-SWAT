@@ -95,21 +95,21 @@ def validate_source_allocations(
     candidatas, ver STATUS_NO_SOURCE_HRU)."""
     errors: list[str] = []
     if not source_allocations:
-        errors.append("Debe agregar al menos una cobertura fuente.")
+        errors.append("You must add at least one source coverage.")
         return errors
 
     names = [name for name, _ in source_allocations]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
-        errors.append(f"Coberturas repetidas en la lista: {', '.join(duplicates)}.")
+        errors.append(f"Repeated coverages in the list: {', '.join(duplicates)}.")
 
     for name, pct in source_allocations:
         if pct <= 0:
-            errors.append(f"'{name}': el porcentaje debe ser mayor a 0.")
+            errors.append(f"'{name}': the percentage must be greater than 0.")
 
     total = sum(pct for _, pct in source_allocations)
     if abs(total - 100) > tolerance:
-        errors.append(f"Los porcentajes deben sumar 100 (suman {total:.2f}).")
+        errors.append(f"Percentages must add up to 100 (they add up to {total:.2f}).")
 
     return errors
 
@@ -197,7 +197,7 @@ def plan_area_allocation(
                     requested_ha=requested_ha,
                     selected_ha=0.0,
                     status=STATUS_NO_SOURCE_HRU,
-                    notes=[f"Subcuenca {subbasin}: no tiene ninguna HRU con cobertura '{source_lulc}' disponible."],
+                    notes=[f"Subbasin {subbasin}: has no HRU with coverage '{source_lulc}' available."],
                 )
             )
             continue
@@ -221,8 +221,8 @@ def plan_area_allocation(
         notes: list[str] = []
         if accumulated < requested_ha - tolerance:
             notes.append(
-                f"Subcuenca {subbasin}: cobertura '{source_lulc}' solo tiene {accumulated:.2f} ha disponibles "
-                f"de las {requested_ha:.2f} ha pedidas; se seleccionó toda el área disponible."
+                f"Subbasin {subbasin}: coverage '{source_lulc}' only has {accumulated:.2f} ha available "
+                f"out of the {requested_ha:.2f} ha requested; all available area was selected."
             )
 
         plan.by_source.append(

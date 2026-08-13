@@ -98,15 +98,15 @@ def parse_mass_allocation_csv(csv_path: str | Path) -> tuple[dict[int, SubbasinA
     try:
         df = pd.read_csv(csv_path, dtype=str)
     except Exception as error:
-        raise ValueError(f"No se pudo leer el archivo: {error}") from None
+        raise ValueError(f"Could not read the file: {error}") from None
 
     if _SUBBASIN_COLUMN not in df.columns:
-        raise ValueError(f"Falta la columna requerida '{_SUBBASIN_COLUMN}'.")
+        raise ValueError(f"Missing required column '{_SUBBASIN_COLUMN}'.")
     if _AREA_COLUMN not in df.columns:
-        raise ValueError(f"Falta la columna requerida '{_AREA_COLUMN}'.")
+        raise ValueError(f"Missing required column '{_AREA_COLUMN}'.")
     coverage_columns = [c for c in df.columns if c not in (_SUBBASIN_COLUMN, _AREA_COLUMN)]
     if not coverage_columns:
-        raise ValueError("El CSV no tiene ninguna columna de cobertura además de 'subbasin'/'area_ha'.")
+        raise ValueError("The CSV has no coverage column besides 'subbasin'/'area_ha'.")
 
     allocations: dict[int, SubbasinAreaAllocation] = {}
     errors: list[str] = []
@@ -119,10 +119,10 @@ def parse_mass_allocation_csv(csv_path: str | Path) -> tuple[dict[int, SubbasinA
         try:
             subbasin = int(float(str(raw_subbasin).strip()))
         except ValueError:
-            errors.append(f"'{raw_subbasin}' no es un número de subcuenca válido.")
+            errors.append(f"'{raw_subbasin}' is not a valid subbasin number.")
             continue
         if subbasin in seen:
-            errors.append(f"Subcuenca {subbasin}: aparece más de una vez en el CSV; se ignoró la fila repetida.")
+            errors.append(f"Subbasin {subbasin}: appears more than once in the CSV; the repeated row was ignored.")
             continue
         seen.add(subbasin)
 
@@ -132,10 +132,10 @@ def parse_mass_allocation_csv(csv_path: str | Path) -> tuple[dict[int, SubbasinA
         try:
             area_ha = float(raw_area)
         except ValueError:
-            errors.append(f"Subcuenca {subbasin}: área '{raw_area}' no es un número válido.")
+            errors.append(f"Subbasin {subbasin}: area '{raw_area}' is not a valid number.")
             continue
         if area_ha <= 0:
-            errors.append(f"Subcuenca {subbasin}: el área ({_AREA_COLUMN}) debe ser mayor a 0.")
+            errors.append(f"Subbasin {subbasin}: the area ({_AREA_COLUMN}) must be greater than 0.")
             continue
 
         row_allocations: list[tuple[str, float]] = []
@@ -147,27 +147,27 @@ def parse_mass_allocation_csv(csv_path: str | Path) -> tuple[dict[int, SubbasinA
             try:
                 pct = float(raw_value)
             except ValueError:
-                row_errors.append(f"cobertura '{coverage}': '{raw_value}' no es un número.")
+                row_errors.append(f"coverage '{coverage}': '{raw_value}' is not a number.")
                 continue
             if pct <= 0:
                 continue
             row_allocations.append((coverage, pct))
 
         if row_errors:
-            errors.append(f"Subcuenca {subbasin}: " + "; ".join(row_errors))
+            errors.append(f"Subbasin {subbasin}: " + "; ".join(row_errors))
             continue
 
         if not row_allocations:
             errors.append(
-                f"Subcuenca {subbasin}: tiene {_AREA_COLUMN} pero ninguna cobertura fuente con % asignado."
+                f"Subbasin {subbasin}: has {_AREA_COLUMN} but no source coverage with a % assigned."
             )
             continue
 
         total = sum(pct for _, pct in row_allocations)
         if abs(total - 100) > _ROW_PCT_SUM_TOLERANCE:
             errors.append(
-                f"Subcuenca {subbasin}: las celdas de cobertura suman {total:.2f}%, deben sumar 100% del "
-                f"área NbS indicada ({area_ha:.2f} ha)."
+                f"Subbasin {subbasin}: coverage cells add up to {total:.2f}%, they must add up to 100% of the "
+                f"stated NbS area ({area_ha:.2f} ha)."
             )
             continue
 
@@ -228,12 +228,12 @@ def plan_mass_area_allocation(
     for subbasin_id, allocation in allocations.items():
         entry = sub_by_id.get(subbasin_id)
         if entry is None:
-            result.skipped[subbasin_id] = "No se encontró esa subcuenca en el proyecto (.sub/.pnd no localizado)."
+            result.skipped[subbasin_id] = "That subbasin was not found in the project (.sub/.pnd not located)."
             continue
 
         hru_files = load_subbasin_hru_files(txtinout_dir, subbasin_id)
         if not hru_files:
-            result.skipped[subbasin_id] = "La subcuenca no tiene ninguna HRU."
+            result.skipped[subbasin_id] = "The subbasin has no HRUs."
             continue
 
         subbasin_area_ha = parse_sub_file(entry.sub_file, subbasin_id).area_km2 * 100
@@ -248,13 +248,13 @@ def plan_mass_area_allocation(
         if strict and plan.total_deficit_ha > _AREA_DEFICIT_TOLERANCE:
             achievable_ha = sum(source.selected_ha for source in plan.by_source)
             breakdown = "; ".join(
-                f"{source.source_lulc}: {source.selected_ha:.2f} ha disponibles" for source in plan.by_source
+                f"{source.source_lulc}: {source.selected_ha:.2f} ha available" for source in plan.by_source
             )
             result.skipped[subbasin_id] = (
-                f"El área NbS pedida ({allocation.area_ha:.2f} ha) supera el área disponible entre las "
-                f"coberturas fuente asignadas para esta subcuenca ({achievable_ha:.2f} ha en total -- "
-                f"{breakdown}). Bajá 'area_ha' a {achievable_ha:.2f} ha o menos, o agregá otra cobertura "
-                f"fuente con área disponible."
+                f"The requested NbS area ({allocation.area_ha:.2f} ha) exceeds the area available among the "
+                f"source coverages assigned for this subbasin ({achievable_ha:.2f} ha total -- "
+                f"{breakdown}). Lower 'area_ha' to {achievable_ha:.2f} ha or less, or add another source "
+                f"coverage with available area."
             )
             continue
 

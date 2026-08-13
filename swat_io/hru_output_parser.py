@@ -151,8 +151,8 @@ def _parse_data_line(path_name: str, line_number: int, line: str) -> tuple[int, 
     prefix_tokens = line[:_IDENTIFIER_PREFIX_LEN].split()
     if len(prefix_tokens) != 6:
         raise HruOutputParseError(
-            f"{path_name}:{line_number}: se esperaban 6 valores en el prefijo LULC/HRU/GIS/SUB/MGT/MON, "
-            f"se encontraron {len(prefix_tokens)}"
+            f"{path_name}:{line_number}: expected 6 values in the LULC/HRU/GIS/SUB/MGT/MON prefix, "
+            f"found {len(prefix_tokens)}"
         )
     _lulc, hru_token, _gis, sub_token, _mgt, mon_token = prefix_tokens
     try:
@@ -160,7 +160,7 @@ def _parse_data_line(path_name: str, line_number: int, line: str) -> tuple[int, 
         sub = int(sub_token)
         mon = float(mon_token)
     except ValueError as exc:
-        raise HruOutputParseError(f"{path_name}:{line_number}: HRU/SUB/MON no numérico ({exc})") from exc
+        raise HruOutputParseError(f"{path_name}:{line_number}: HRU/SUB/MON not numeric ({exc})") from exc
 
     values: list[float] = []
     for start, end in _VARIABLE_COLSPECS:
@@ -174,7 +174,7 @@ def _parse_data_line(path_name: str, line_number: int, line: str) -> tuple[int, 
         try:
             values.append(float(token))
         except ValueError as exc:
-            raise HruOutputParseError(f"{path_name}:{line_number}: valor no numérico ({exc})") from exc
+            raise HruOutputParseError(f"{path_name}:{line_number}: non-numeric value ({exc})") from exc
 
     return sub, hru, mon, values
 
@@ -197,7 +197,7 @@ def _iter_hru_output_timeseries(
     frequency = run_settings.print_frequency
 
     if frequency not in (PRINT_FREQUENCY_YEARLY, PRINT_FREQUENCY_MONTHLY, PRINT_FREQUENCY_DAILY):
-        raise ValueError(f"print_frequency desconocido: {frequency}")
+        raise ValueError(f"Unknown print_frequency: {frequency}")
 
     states: dict[int, _HruDateState] = {}
 
@@ -287,7 +287,7 @@ def build_hru_output_database(
         conn.close()
 
     if rows_written == 0:
-        raise HruOutputParseError(f"{Path(hru_path).name}: no se encontró ninguna fila de datos (prefijo 'LULC')")
+        raise HruOutputParseError(f"{Path(hru_path).name}: no data row was found (prefix 'LULC')")
 
     return {
         "rows": rows_written,

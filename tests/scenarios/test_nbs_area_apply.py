@@ -130,13 +130,13 @@ def test_a_hru_selected_for_one_source_coverage_is_never_reused():
 
 def test_validate_source_allocations_requires_100_percent_total():
     errors = validate_source_allocations([("FRST", 40.0), ("PAST", 40.0)])
-    assert any("sumar 100" in e for e in errors)
+    assert any("add up to 100" in e for e in errors)
 
 
 def test_validate_source_allocations_rejects_duplicates_and_non_positive():
     errors = validate_source_allocations([("FRST", 0.0), ("FRST", 100.0)])
-    assert any("repetidas" in e for e in errors)
-    assert any("mayor a 0" in e for e in errors)
+    assert any("Repeated" in e for e in errors)
+    assert any("greater than 0" in e for e in errors)
 
 
 def test_validate_source_allocations_accepts_well_formed_list():

@@ -36,12 +36,12 @@ class ShapeRecord:
 def _read_shapes(path: Path | str, id_field: str) -> list[ShapeRecord]:
     path = Path(path)
     if not path.is_file():
-        raise ShapefileReadError(f"No se encontró el shapefile: {path}")
+        raise ShapefileReadError(f"Shapefile not found: {path}")
 
     reader = shapefile.Reader(str(path))
     field_names = [field[0] for field in reader.fields[1:]]  # fields[0] es DeletionFlag, no es un campo real
     if id_field not in field_names:
-        raise ShapefileReadError(f"{path.name}: no tiene el campo '{id_field}' esperado")
+        raise ShapefileReadError(f"{path.name}: does not have the expected field '{id_field}'")
 
     records: list[ShapeRecord] = []
     for shape_record in reader.iterShapeRecords():

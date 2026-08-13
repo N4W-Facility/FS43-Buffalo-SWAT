@@ -52,7 +52,7 @@ def parse_pct_series_text(raw: str) -> list[float]:
     problemas juntos) si no hay ningún valor válido o alguno está fuera de
     rango."""
     if raw is None or not raw.strip():
-        raise ValueError("La serie de porcentajes está vacía.")
+        raise ValueError("The percentage series is empty.")
 
     tokens = [token.strip() for token in raw.split(_PCT_SEPARATOR) if token.strip() != ""]
     values: list[float] = []
@@ -61,17 +61,17 @@ def parse_pct_series_text(raw: str) -> list[float]:
         try:
             value = float(token)
         except ValueError:
-            errors.append(f"'{token}' no es un número.")
+            errors.append(f"'{token}' is not a number.")
             continue
         if not (0 < value <= 100):
-            errors.append(f"{value} está fuera de rango (0, 100].")
+            errors.append(f"{value} is out of range (0, 100].")
             continue
         values.append(value)
 
     if errors:
         raise ValueError("; ".join(errors))
     if not values:
-        raise ValueError("La serie de porcentajes no tiene ningún valor.")
+        raise ValueError("The percentage series has no value.")
     return values
 
 

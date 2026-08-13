@@ -37,18 +37,18 @@ def parse_wetland_import_csv(
     try:
         df = pd.read_csv(csv_path, index_col=0)
     except Exception as error:
-        raise ValueError(f"No se pudo leer el archivo: {error}") from None
+        raise ValueError(f"Could not read the file: {error}") from None
 
     errors: list[str] = []
     if df.index.name not in (None, "subbasin_id"):
-        errors.append(f"Columna índice inesperada: '{df.index.name}' (se esperaba 'subbasin_id').")
+        errors.append(f"Unexpected index column: '{df.index.name}' (expected 'subbasin_id').")
 
     field_columns = []
     for column in df.columns:
         if column in _NON_FIELD_COLUMNS:
             continue
         if column not in _COLUMN_TO_FIELD_ID:
-            errors.append(f"Columna desconocida: '{column}'.")
+            errors.append(f"Unknown column: '{column}'.")
             continue
         field_columns.append(column)
 
@@ -59,10 +59,10 @@ def parse_wetland_import_csv(
         try:
             subbasin_id = int(raw_subbasin_id)
         except (TypeError, ValueError):
-            errors.append(f"subbasin_id inválido: '{raw_subbasin_id}'.")
+            errors.append(f"Invalid subbasin_id: '{raw_subbasin_id}'.")
             continue
         if subbasin_id not in known_subbasin_set:
-            errors.append(f"Subcuenca {subbasin_id}: no existe en este proyecto.")
+            errors.append(f"Subbasin {subbasin_id}: does not exist in this project.")
             continue
 
         for column in field_columns:
@@ -73,12 +73,12 @@ def parse_wetland_import_csv(
             try:
                 value = float(raw_value)
             except (TypeError, ValueError):
-                errors.append(f"Subcuenca {subbasin_id}, {column}: '{raw_value}' no es un número.")
+                errors.append(f"Subbasin {subbasin_id}, {column}: '{raw_value}' is not a number.")
                 continue
             try:
                 validate_field_value(field_id, value, layout)
             except ValueError as error:
-                errors.append(f"Subcuenca {subbasin_id}: {error}")
+                errors.append(f"Subbasin {subbasin_id}: {error}")
                 continue
             staged.setdefault(subbasin_id, {})[field_id] = value
 

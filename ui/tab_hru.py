@@ -551,7 +551,7 @@ class HRUsTab(ctk.CTkFrame):
 
                 hru_file = hru_files.get(hru_id)
                 if hru_file is None:
-                    errors.append(f"{subbasin_id}/{hru_id}: ya no existe.")
+                    errors.append(f"{subbasin_id}/{hru_id}: no longer exists.")
                     continue
                 try:
                     write_hru_values(hru_file, values)

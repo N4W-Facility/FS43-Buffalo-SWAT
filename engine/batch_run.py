@@ -226,12 +226,12 @@ def run_land_cover_batch(
         step_label = f"[{index}/{total_steps}] {folder_name}"
 
         try:
-            report(f"{step_label}: copiando proyecto base...")
+            report(f"{step_label}: copying base project...")
             scenario_dir = create_working_scenario(
                 destination_dir,
                 reference_project_dir,
                 folder_name,
-                on_progress=lambda copied, total: report(f"{step_label}: copiando ({copied}/{total})..."),
+                on_progress=lambda copied, total: report(f"{step_label}: copying ({copied}/{total})..."),
             )
         except FileExistsError as error:
             results.append(
@@ -248,7 +248,7 @@ def run_land_cover_batch(
         try:
             txtinout_dir = scenario_dir / "TxtInOut"
 
-            report(f"{step_label}: calculando reasignación de área...")
+            report(f"{step_label}: computing area reallocation...")
             hru_files_by_subbasin = _load_all_subbasin_hru_files(txtinout_dir)
             reallocation_results = plan_batch_reallocation(
                 hru_files_by_subbasin,
@@ -261,12 +261,12 @@ def run_land_cover_batch(
             _apply_reallocation(hru_files_by_subbasin, reallocation_results)
             _write_batch_report(scenario_dir, config, target_pct, reallocation_results)
 
-            report(f"{step_label}: ejecutando swat2012.exe...")
+            report(f"{step_label}: running swat2012.exe...")
             run_result = run_scenario(txtinout_dir, swat_executable, target_executable_name)
             if not run_result.success:
-                raise RuntimeError(f"swat2012.exe terminó con código {run_result.exit_code}")
+                raise RuntimeError(f"swat2012.exe exited with code {run_result.exit_code}")
 
-            report(f"{step_label}: organizando resultados...")
+            report(f"{step_label}: organizing outputs...")
             _organize_outputs(scenario_dir, output_options, report)
 
             results.append(
@@ -277,7 +277,7 @@ def run_land_cover_batch(
                     reallocation=reallocation_results,
                 )
             )
-            report(f"{step_label}: listo.")
+            report(f"{step_label}: done.")
         except Exception as error:  # noqa: BLE001 - un escenario no debe abortar el batch completo
             results.append(
                 ScenarioRunResult(target_pct=target_pct, scenario_dir=scenario_dir, status="error", error=str(error))

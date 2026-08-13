@@ -90,6 +90,31 @@ class SummaryTab(ctk.CTkFrame):
         hint.place(relx=0.5, rely=0.4, anchor="center")
         return frame
 
+    def _build_check_with_hint(self, master: ctk.CTkBaseClass, label_key: str, hint_key: str) -> ctk.CTkCheckBox:
+        """Checkbox tildada por default (para que "Run" haga algo útil sin
+        que el usuario tenga que adivinar que hay que tildar algo antes) más
+        una línea chica debajo diciendo qué calcula -- pedido explícito del
+        usuario, 2026-08-13: antes ninguna de las dos casillas indicaba qué
+        generaba, y ambas arrancaban destildadas, así que un primer click en
+        Run sin tocar nada no hacía nada (ver _on_run_clicked)."""
+        holder = ctk.CTkFrame(master, fg_color="transparent")
+        holder.pack(side="left", padx=(0, 16))
+
+        check = ctk.CTkCheckBox(holder, text=self._config.text(label_key))
+        check.pack(anchor="w")
+        check.select()
+
+        hint = ctk.CTkLabel(
+            holder,
+            text=self._config.text(hint_key),
+            text_color=self._colors.get("text_secondary"),
+            font=ctk.CTkFont(size=11),
+            anchor="w",
+        )
+        hint.pack(anchor="w")
+
+        return check
+
     def _build_enabled_state(self) -> ctk.CTkFrame:
         # Scrollable en vez de CTkFrame plano: con los tres bloques (Wetlands,
         # HRU, Gráficas) más el canvas de matplotlib, el contenido puede
@@ -100,11 +125,10 @@ class SummaryTab(ctk.CTkFrame):
         controls = ctk.CTkFrame(frame, fg_color="transparent")
         controls.grid(row=0, column=0, sticky="ew")
 
-        self._wetlands_check = ctk.CTkCheckBox(controls, text=self._config.text("summary.check_wetlands"))
-        self._wetlands_check.pack(side="left")
-
-        self._hru_check = ctk.CTkCheckBox(controls, text=self._config.text("summary.check_hru"))
-        self._hru_check.pack(side="left", padx=(16, 0))
+        self._wetlands_check = self._build_check_with_hint(
+            controls, "summary.check_wetlands", "summary.check_wetlands_hint"
+        )
+        self._hru_check = self._build_check_with_hint(controls, "summary.check_hru", "summary.check_hru_hint")
 
         self._run_button = ctk.CTkButton(
             controls, text=self._config.text("summary.run"), command=self._on_run_clicked
@@ -302,10 +326,11 @@ class SummaryTab(ctk.CTkFrame):
         run_wetlands = bool(self._wetlands_check.get())
         run_hru = bool(self._hru_check.get())
         if not run_wetlands and not run_hru:
+            self._set_status(self._config.text("summary.no_selection_hint"), error=True)
             return
 
         self._set_controls_enabled(False)
-        self._status_label.configure(text=self._config.text("summary.running"))
+        self._set_status(self._config.text("summary.running"))
         self._progress_bar.grid()
         self._progress_value = _PROGRESS_MIN
         self._progress_direction = 1
@@ -350,7 +375,7 @@ class SummaryTab(ctk.CTkFrame):
         run_in_background(
             self,
             work,
-            on_progress=lambda message: self._status_label.configure(text=message),
+            on_progress=lambda message: self._set_status(message),
             on_done=self._on_run_done,
             on_error=self._on_run_error,
         )
@@ -369,12 +394,16 @@ class SummaryTab(ctk.CTkFrame):
             self._land_use_df = results["land_use_df"]
             self._refresh_chart_selector()
 
-        self._status_label.configure(text="")
+        self._set_status("")
         self._finish_run()
 
     def _on_run_error(self, error: Exception) -> None:
-        self._status_label.configure(text=self._config.text("summary.error").format(error=str(error)))
+        self._set_status(self._config.text("summary.error").format(error=str(error)), error=True)
         self._finish_run()
+
+    def _set_status(self, text: str, *, error: bool = False) -> None:
+        color_key = "error" if error else "text_secondary"
+        self._status_label.configure(text=text, text_color=self._colors.get(color_key))
 
     def _animate_progress(self) -> None:
         if not self._progress_animation_running:

@@ -59,13 +59,13 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
     path = hru_file.source_path
 
     if not hru_file.lines:
-        issues.append(_issue(SEVERITY_ERROR, "EMPTY_FILE", "El archivo .hru está vacío.", path, None, None))
+        issues.append(_issue(SEVERITY_ERROR, "EMPTY_FILE", "The .hru file is empty.", path, None, None))
         return issues
 
     parameter_lines = [line for line in hru_file.lines if isinstance(line, HRUParameterLine)]
     if not parameter_lines:
         issues.append(
-            _issue(SEVERITY_ERROR, "NO_PARAMETERS", "No se reconoció ningún parámetro en el archivo.", path, None, None)
+            _issue(SEVERITY_ERROR, "NO_PARAMETERS", "No parameter was recognized in the file.", path, None, None)
         )
 
     by_name: dict[str, list[HRUParameterLine]] = {}
@@ -78,7 +78,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
                 _issue(
                     SEVERITY_WARNING,
                     "DUPLICATE_PARAMETER",
-                    f"El parámetro {name} aparece {len(occurrences)} veces (líneas "
+                    f"Parameter {name} appears {len(occurrences)} times (lines "
                     f"{[o.line_number for o in occurrences]}).",
                     path,
                     occurrences[0].line_number,
@@ -88,7 +88,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
 
     hru_fr_lines = by_name.get("HRU_FR", [])
     if not hru_fr_lines:
-        issues.append(_issue(SEVERITY_ERROR, "MISSING_HRU_FR", "No se encontró el parámetro HRU_FR.", path, None, "HRU_FR"))
+        issues.append(_issue(SEVERITY_ERROR, "MISSING_HRU_FR", "Parameter HRU_FR was not found.", path, None, "HRU_FR"))
     else:
         hru_fr_value = hru_fr_lines[0].parsed_value
         if not isinstance(hru_fr_value, (int, float)):
@@ -96,7 +96,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
                 _issue(
                     SEVERITY_ERROR,
                     "HRU_FR_NOT_NUMERIC",
-                    f"HRU_FR no es numérico: {hru_fr_value!r}.",
+                    f"HRU_FR is not numeric: {hru_fr_value!r}.",
                     path,
                     hru_fr_lines[0].line_number,
                     "HRU_FR",
@@ -108,7 +108,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
                     _issue(
                         SEVERITY_ERROR,
                         "HRU_FR_NEGATIVE",
-                        f"HRU_FR es negativo: {hru_fr_value}.",
+                        f"HRU_FR is negative: {hru_fr_value}.",
                         path,
                         hru_fr_lines[0].line_number,
                         "HRU_FR",
@@ -119,7 +119,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
                     _issue(
                         SEVERITY_ERROR,
                         "HRU_FR_OUT_OF_RANGE",
-                        f"HRU_FR mayor que 1: {hru_fr_value}.",
+                        f"HRU_FR greater than 1: {hru_fr_value}.",
                         path,
                         hru_fr_lines[0].line_number,
                         "HRU_FR",
@@ -133,7 +133,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
             _issue(
                 SEVERITY_INFO,
                 "MISSING_METADATA",
-                f"Metadatos ausentes: {', '.join(missing_metadata)}.",
+                f"Missing metadata: {', '.join(missing_metadata)}.",
                 path,
                 None,
                 None,
@@ -149,9 +149,9 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
                     _issue(
                         SEVERITY_WARNING,
                         "METADATA_FILENAME_MISMATCH",
-                        f"El contenido indica subbasin={metadata.subbasin}, hru={metadata.hru}, "
-                        f"pero el nombre de archivo indica subbasin={filename_subbasin}, hru={filename_hru}. "
-                        "Se prioriza el contenido.",
+                        f"The content indicates subbasin={metadata.subbasin}, hru={metadata.hru}, "
+                        f"but the filename indicates subbasin={filename_subbasin}, hru={filename_hru}. "
+                        "The content takes priority.",
                         path,
                         None,
                         None,
@@ -164,7 +164,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
                 _issue(
                     SEVERITY_WARNING,
                     "UNPARSED_PARAMETRIC_LINE",
-                    "La línea contiene '|' pero no pudo interpretarse como parámetro.",
+                    "The line contains '|' but could not be parsed as a parameter.",
                     path,
                     line.line_number,
                     None,
@@ -177,7 +177,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
             _issue(
                 SEVERITY_ERROR,
                 "RENDER_LINE_MISMATCH",
-                f"El renderizado produce {rendered_line_count} líneas, se esperaban {len(hru_file.lines)}.",
+                f"Rendering produced {rendered_line_count} lines, expected {len(hru_file.lines)}.",
                 path,
                 None,
                 None,
@@ -189,7 +189,7 @@ def validate_hru_file(hru_file: HRUFile) -> list[HRUValidationIssue]:
             _issue(
                 SEVERITY_INFO,
                 "NON_UTF8_ENCODING",
-                f"El archivo se decodificó con '{hru_file.encoding}' (no UTF-8).",
+                f"The file was decoded with '{hru_file.encoding}' (not UTF-8).",
                 path,
                 None,
                 None,

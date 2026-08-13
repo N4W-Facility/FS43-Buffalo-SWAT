@@ -227,9 +227,9 @@ def export_rch_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
     reach ya es su propia unidad espacial (ver docstring del módulo)."""
     scenario_dirs = discover_scenario_dirs(batch_dir)
     if not scenario_dirs:
-        raise ComparisonExportError("No se encontró ningún escenario (carpeta con TxtInOut/) en la carpeta de batch.")
+        raise ComparisonExportError("No scenario (folder with TxtInOut/) was found in the batch folder.")
     if not variables:
-        raise ComparisonExportError("No se eligió ninguna variable para exportar.")
+        raise ComparisonExportError("No variable was chosen to export.")
 
     dest_dir = Path(dest_dir) if dest_dir is not None else comparison_exports_dir(batch_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -241,7 +241,7 @@ def export_rch_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
             frames[scenario_label(scenario_dir)] = df
 
     if not frames:
-        raise ComparisonExportError("Ningún escenario tiene output.rch organizado todavía (botón \"Organize .rch\").")
+        raise ComparisonExportError("No scenario has output.rch organized yet (\"Organize .rch\" button).")
 
     written: list[Path] = []
     for variable in variables:
@@ -257,7 +257,7 @@ def export_rch_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
         written.append(path)
 
     if not written:
-        raise ComparisonExportError("Ninguna de las variables elegidas tiene datos en los escenarios encontrados.")
+        raise ComparisonExportError("None of the chosen variables have data in the scenarios found.")
     return written
 
 
@@ -271,9 +271,9 @@ def export_sub_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
     espacial (ver docstring del módulo)."""
     scenario_dirs = discover_scenario_dirs(batch_dir)
     if not scenario_dirs:
-        raise ComparisonExportError("No se encontró ningún escenario (carpeta con TxtInOut/) en la carpeta de batch.")
+        raise ComparisonExportError("No scenario (folder with TxtInOut/) was found in the batch folder.")
     if not variables:
-        raise ComparisonExportError("No se eligió ninguna variable para exportar.")
+        raise ComparisonExportError("No variable was chosen to export.")
 
     dest_dir = Path(dest_dir) if dest_dir is not None else comparison_exports_dir(batch_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -285,7 +285,7 @@ def export_sub_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
             frames[scenario_label(scenario_dir)] = df
 
     if not frames:
-        raise ComparisonExportError("Ningún escenario tiene output.sub organizado todavía (botón \"Organize .sub\").")
+        raise ComparisonExportError("No scenario has output.sub organized yet (\"Organize .sub\" button).")
 
     written: list[Path] = []
     for variable in variables:
@@ -301,7 +301,7 @@ def export_sub_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
         written.append(path)
 
     if not written:
-        raise ComparisonExportError("Ninguna de las variables elegidas tiene datos en los escenarios encontrados.")
+        raise ComparisonExportError("None of the chosen variables have data in the scenarios found.")
     return written
 
 
@@ -314,9 +314,9 @@ def export_hru_point_comparison(
     """Un CSV por variable (date, <escenario...>) para un único HRU puntual."""
     scenario_dirs = discover_scenario_dirs(batch_dir)
     if not scenario_dirs:
-        raise ComparisonExportError("No se encontró ningún escenario (carpeta con TxtInOut/) en la carpeta de batch.")
+        raise ComparisonExportError("No scenario (folder with TxtInOut/) was found in the batch folder.")
     if not variables:
-        raise ComparisonExportError("No se eligió ninguna variable para exportar.")
+        raise ComparisonExportError("No variable was chosen to export.")
 
     dest_dir = Path(dest_dir) if dest_dir is not None else comparison_exports_dir(batch_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -342,8 +342,8 @@ def export_hru_point_comparison(
 
     if not written:
         raise ComparisonExportError(
-            f"Subcuenca {sub} / HRU {hru}: ninguna de las variables elegidas tiene datos en los escenarios "
-            "encontrados (¿corriste \"Organize .hru output\" en al menos un escenario?)."
+            f"Subbasin {sub} / HRU {hru}: none of the chosen variables have data in the scenarios "
+            "found (did you run \"Organize .hru output\" on at least one scenario?)."
         )
     return written
 
@@ -382,14 +382,14 @@ def export_hru_group_comparison(
     agregada por subcuenca."""
     scenario_dirs = discover_scenario_dirs(batch_dir)
     if not scenario_dirs:
-        raise ComparisonExportError("No se encontró ningún escenario (carpeta con TxtInOut/) en la carpeta de batch.")
+        raise ComparisonExportError("No scenario (folder with TxtInOut/) was found in the batch folder.")
     if not variables:
-        raise ComparisonExportError("No se eligió ninguna variable para exportar.")
+        raise ComparisonExportError("No variable was chosen to export.")
 
     classification = _hru_classification(scenario_dirs)
     hru_ids = _matching_hru_ids(classification, group_filter, scope)
     if not hru_ids:
-        raise ComparisonExportError("Ninguna HRU coincide con el filtro de cobertura/pendiente/suelo elegido.")
+        raise ComparisonExportError("No HRU matches the chosen coverage/slope/soil filter.")
 
     hru_to_sub = {hru_id: classification[hru_id][0] for hru_id in hru_ids}
     group_cols = ["date"] if scope == "basin" else ["date", "sub"]
@@ -424,7 +424,7 @@ def export_hru_group_comparison(
 
     if not written:
         raise ComparisonExportError(
-            "Ninguna de las variables elegidas tiene datos en los escenarios encontrados "
-            "(¿corriste \"Organize .hru output\" en al menos un escenario?)."
+            "None of the chosen variables have data in the scenarios found "
+            "(did you run \"Organize .hru output\" on at least one scenario?)."
         )
     return written

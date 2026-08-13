@@ -62,17 +62,17 @@ def _split_priority_list(raw_value, *, column: str, errors: list[str]) -> list[s
         return None
     tokens = [token.strip() for token in str(raw_value).split(_LIST_SEPARATOR) if token.strip() != ""]
     if not tokens:
-        errors.append(f"'{column}': no tiene ningún valor válido después de separar por '{_LIST_SEPARATOR}'.")
+        errors.append(f"'{column}': has no valid value after splitting by '{_LIST_SEPARATOR}'.")
         return None
     duplicates = sorted({token for token in tokens if tokens.count(token) > 1})
     if duplicates:
-        errors.append(f"'{column}': valores repetidos {duplicates}; el orden de prioridad quedaría ambiguo.")
+        errors.append(f"'{column}': repeated values {duplicates}; the priority order would be ambiguous.")
     return tokens
 
 
 def _parse_pct_series(raw_value, errors: list[str]) -> list[float]:
     if _is_blank(raw_value):
-        errors.append("'target_pct_series' está vacío.")
+        errors.append("'target_pct_series' is empty.")
         return []
     tokens = [token.strip() for token in str(raw_value).split(",") if token.strip() != ""]
     values: list[float] = []
@@ -80,14 +80,14 @@ def _parse_pct_series(raw_value, errors: list[str]) -> list[float]:
         try:
             value = float(token)
         except ValueError:
-            errors.append(f"'target_pct_series': '{token}' no es un número.")
+            errors.append(f"'target_pct_series': '{token}' is not a number.")
             continue
         if not (0 < value <= 100):
-            errors.append(f"'target_pct_series': {value} está fuera de rango (0, 100].")
+            errors.append(f"'target_pct_series': {value} is out of range (0, 100].")
             continue
         values.append(value)
     if not values and not errors:
-        errors.append("'target_pct_series' no tiene ningún valor.")
+        errors.append("'target_pct_series' has no value.")
     return values
 
 
@@ -100,16 +100,16 @@ def parse_land_cover_batch_csv(csv_path: str | Path) -> LandCoverBatchConfig:
     try:
         df = pd.read_csv(csv_path, dtype=str)
     except Exception as error:
-        raise ValueError(f"No se pudo leer el archivo: {error}") from None
+        raise ValueError(f"Could not read the file: {error}") from None
 
     missing_columns = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
     if missing_columns:
-        raise ValueError(f"Faltan columnas requeridas: {', '.join(missing_columns)}.")
+        raise ValueError(f"Missing required columns: {', '.join(missing_columns)}.")
 
     if len(df) != 1:
         raise ValueError(
-            f"El CSV debe tener exactamente una fila de configuración (tiene {len(df)}); "
-            "no se soporta más de una cobertura objetivo por batch."
+            f"The CSV must have exactly one configuration row (it has {len(df)}); "
+            "more than one target coverage per batch is not supported."
         )
 
     row = df.iloc[0]
@@ -117,13 +117,13 @@ def parse_land_cover_batch_csv(csv_path: str | Path) -> LandCoverBatchConfig:
 
     target_lulc = "" if _is_blank(row["target_lulc"]) else str(row["target_lulc"]).strip()
     if not target_lulc:
-        errors.append("'target_lulc' está vacío.")
+        errors.append("'target_lulc' is empty.")
 
     target_pct_series = _parse_pct_series(row["target_pct_series"], errors)
 
     donor_priority = _split_priority_list(row["donor_priority"], column="donor_priority", errors=errors)
     if not donor_priority:
-        errors.append("'donor_priority' está vacío: se necesita al menos una cobertura donante.")
+        errors.append("'donor_priority' is empty: at least one donor coverage is required.")
 
     slope_priority = (
         _split_priority_list(row["slope_priority"], column="slope_priority", errors=errors)

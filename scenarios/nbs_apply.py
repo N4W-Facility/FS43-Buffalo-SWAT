@@ -124,29 +124,29 @@ def validate_nbs_definition(nbs: NbSDefinition, plant_dat) -> list[str]:
 
     if nbs.new_coverage is None:
         if plant_dat.get_record_by_cpnm(nbs.target_lulc) is None:
-            errors.append(f"La cobertura objetivo '{nbs.target_lulc}' no existe en plant.dat de este proyecto.")
+            errors.append(f"Target coverage '{nbs.target_lulc}' does not exist in this project's plant.dat.")
     else:
         if len(nbs.new_coverage.cpnm) != 4:
-            errors.append("CPNM de la cobertura nueva debe tener exactamente 4 caracteres.")
+            errors.append("The new coverage's CPNM must be exactly 4 characters.")
         missing_phys = [n for n in _REQUIRED_PHYSIOLOGY_FIELDS if n not in nbs.new_coverage.physiology]
         if missing_phys:
-            errors.append("Faltan campos de fisiología vegetal: " + ", ".join(missing_phys))
+            errors.append("Missing plant physiology fields: " + ", ".join(missing_phys))
 
     if nbs.hru_params.get("CANMX") is None:
-        errors.append("Falta CANMX (obligatorio para cualquier cambio de cobertura).")
+        errors.append("Missing CANMX (required for any coverage change).")
     if nbs.hru_params.get("OV_N") is None:
-        errors.append("Falta OV_N (obligatorio para cualquier cambio de cobertura).")
+        errors.append("Missing OV_N (required for any coverage change).")
 
     igro = nbs.mgt_initial.get("IGRO")
     if igro is None:
-        errors.append("Falta IGRO (obligatorio: 0 si no hay cobertura creciendo al inicio, 1 si sí).")
+        errors.append("Missing IGRO (required: 0 if no coverage is growing at the start, 1 if there is).")
     elif int(igro) == 1:
         for name in ("LAI_INIT", "BIO_INIT", "PHU_PLT"):
             if nbs.mgt_initial.get(name) is None:
-                errors.append(f"Falta {name} (obligatorio cuando IGRO=1).")
+                errors.append(f"Missing {name} (required when IGRO=1).")
 
     if not nbs.cn2_by_hsg:
-        errors.append("La NbS no define ningún valor de CN2 por grupo hidrológico de suelo.")
+        errors.append("The NbS does not define any CN2 value by soil hydrologic group.")
 
     return errors
 
@@ -196,7 +196,7 @@ def sync_new_coverage_to_plant_dat(project_dir: str | Path, nbs: NbSDefinition) 
     conflicting = plant_dat.get_record_by_cpnm(coverage.cpnm)
     if conflicting is not None and conflicting.icnum != record.icnum:
         raise NbSApplyError(
-            f"No se pudo sincronizar plant.dat: el código '{coverage.cpnm}' ya pertenece a otro registro "
+            f"Could not sync plant.dat: code '{coverage.cpnm}' already belongs to another record "
             f"(ICNUM={conflicting.icnum})."
         )
 
@@ -254,7 +254,7 @@ def _apply_to_one_hru(
     sol_path = txtinout_dir / f"{stem}.sol"
 
     if not hru_path.exists() or not mgt_path.exists():
-        return NbSApplyHRUResult(subbasin, hru, "error", "No se encontraron los archivos .hru/.mgt de esa HRU.")
+        return NbSApplyHRUResult(subbasin, hru, "error", "Could not find the .hru/.mgt files for that HRU.")
 
     # HRU_FR se lee del .hru real antes de cualquier cambio -- la NbS nunca
     # la modifica (solo CANMX/OV_N/RSDIN, nunca el área), así que capturarla
@@ -267,8 +267,8 @@ def _apply_to_one_hru(
     if cn2_value is None:
         return NbSApplyHRUResult(
             subbasin, hru, "error",
-            f"La NbS no define CN2 para el grupo hidrológico de suelo de esta HRU "
-            f"({hydgrp or 'desconocido'}); no se escribió nada en esta HRU.",
+            f"The NbS does not define CN2 for this HRU's soil hydrologic group "
+            f"({hydgrp or 'unknown'}); nothing was written to this HRU.",
             hru_fr=hru_fr,
         )
 
@@ -281,7 +281,7 @@ def _apply_to_one_hru(
     if blocking:
         return NbSApplyHRUResult(
             subbasin, hru, "error",
-            "Validación .hru falló: " + "; ".join(issue.message for issue in blocking),
+            ".hru validation failed: " + "; ".join(issue.message for issue in blocking),
             hru_fr=hru_fr,
         )
 
@@ -328,7 +328,7 @@ def apply_nbs(project_dir: str | Path, nbs: NbSDefinition, targets: list[tuple[i
 
     definition_errors = validate_nbs_definition(nbs, plant_dat)
     if definition_errors:
-        raise NbSApplyError("La NbS no se puede aplicar: " + "; ".join(definition_errors))
+        raise NbSApplyError("The NbS cannot be applied: " + "; ".join(definition_errors))
 
     plant_id, cpnm = _resolve_plant_id(txtinout_dir, nbs, plant_dat)
 

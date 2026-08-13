@@ -165,9 +165,9 @@ class HRUFile:
         param = self.get_parameter(name)
         if param is None:
             raise HRUModificationError(
-                f"El parámetro '{name}' no existe en "
-                f"{self.source_path if self.source_path else '<sin ruta>'}; "
-                "no se crean parámetros nuevos."
+                f"Parameter '{name}' does not exist in "
+                f"{self.source_path if self.source_path else '<no path>'}; "
+                "new parameters are not created."
             )
         param.raw_value = format_value_field(param.original_raw_value, value)
         param.parsed_value = value

@@ -60,7 +60,7 @@ def test_zero_or_negative_area_is_reported_and_row_skipped(tmp_path: Path):
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
     assert allocations == {}
-    assert any("mayor a 0" in e for e in errors)
+    assert any("greater than 0" in e for e in errors)
 
 
 def test_row_sum_not_equal_100_is_reported_and_skipped(tmp_path: Path):
@@ -76,8 +76,8 @@ def test_row_sum_not_equal_100_is_reported_and_skipped(tmp_path: Path):
 
     assert 1 not in allocations
     assert 2 not in allocations
-    assert any("suman" in e and "1" in e for e in errors)
-    assert any("suman" in e and "2" in e for e in errors)
+    assert any("add up to" in e and "1" in e for e in errors)
+    assert any("add up to" in e and "2" in e for e in errors)
 
 
 def test_row_sum_under_100_is_reported_and_skipped(tmp_path: Path):
@@ -86,7 +86,7 @@ def test_row_sum_under_100_is_reported_and_skipped(tmp_path: Path):
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
     assert 1 not in allocations
-    assert any("suman" in e for e in errors)
+    assert any("add up to" in e for e in errors)
 
 
 def test_area_with_no_coverage_cells_is_reported_and_skipped(tmp_path: Path):
@@ -95,7 +95,7 @@ def test_area_with_no_coverage_cells_is_reported_and_skipped(tmp_path: Path):
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
     assert allocations == {}
-    assert any("ninguna cobertura fuente" in e for e in errors)
+    assert any("no source coverage" in e for e in errors)
 
 
 def test_non_numeric_cell_is_reported_and_row_skipped(tmp_path: Path):
@@ -116,7 +116,7 @@ def test_duplicate_subbasin_row_is_reported_and_ignored(tmp_path: Path):
     allocations, errors = parse_mass_allocation_csv(csv_path)
 
     assert allocations == {1: SubbasinAreaAllocation(area_ha=100.0, sources=[("FRST", 100.0)])}
-    assert any("más de una vez" in e for e in errors)
+    assert any("more than once" in e for e in errors)
 
 
 def test_missing_subbasin_column_raises(tmp_path: Path):
@@ -136,7 +136,7 @@ def test_missing_area_column_raises(tmp_path: Path):
 def test_no_coverage_columns_raises(tmp_path: Path):
     csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 100}])
 
-    with pytest.raises(ValueError, match="cobertura"):
+    with pytest.raises(ValueError, match="coverage"):
         parse_mass_allocation_csv(csv_path)
 
 
@@ -194,9 +194,9 @@ def test_area_over_subbasin_real_area_is_skipped(txtinout_dir: Path):
 
     assert result.plans == []
     assert 2 in result.skipped
-    assert "supera el área disponible" in result.skipped[2]
+    assert "exceeds the area available" in result.skipped[2]
     assert "500.00 ha" in result.skipped[2]
-    assert "PAST: 500.00 ha disponibles" in result.skipped[2]
+    assert "PAST: 500.00 ha available" in result.skipped[2]
 
 
 def test_area_within_subbasin_but_over_assigned_source_availability_is_skipped(txtinout_dir: Path):
@@ -210,7 +210,7 @@ def test_area_within_subbasin_but_over_assigned_source_availability_is_skipped(t
     assert result.plans == []
     assert 1 in result.skipped
     assert "50.00 ha" in result.skipped[1]
-    assert "FRST: 50.00 ha disponibles" in result.skipped[1]
+    assert "FRST: 50.00 ha available" in result.skipped[1]
 
 
 def test_priorities_are_passed_through_to_every_subbasin_plan(txtinout_dir: Path):

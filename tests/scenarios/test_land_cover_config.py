@@ -87,7 +87,7 @@ def test_rejects_more_than_one_row(tmp_path: Path):
         ],
     )
 
-    with pytest.raises(ValueError, match="una fila"):
+    with pytest.raises(ValueError, match="one configuration row"):
         parse_land_cover_batch_csv(csv_path)
 
 
@@ -96,7 +96,7 @@ def test_rejects_zero_rows(tmp_path: Path):
         tmp_path, [], columns=["target_lulc", "target_pct_series", "donor_priority"]
     )
 
-    with pytest.raises(ValueError, match="una fila"):
+    with pytest.raises(ValueError, match="one configuration row"):
         parse_land_cover_batch_csv(csv_path)
 
 
@@ -142,7 +142,7 @@ def test_rejects_duplicate_values_in_priority_list(tmp_path: Path):
         [{"target_lulc": "FRST", "target_pct_series": "10", "donor_priority": "PAST>PAST"}],
     )
 
-    with pytest.raises(ValueError, match="repetidos"):
+    with pytest.raises(ValueError, match="repeated"):
         parse_land_cover_batch_csv(csv_path)
 
 

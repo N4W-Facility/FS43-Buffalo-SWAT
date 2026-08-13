@@ -44,11 +44,11 @@ def parse_hru_import_csv(
     try:
         df = pd.read_csv(csv_path)
     except Exception as error:
-        raise ValueError(f"No se pudo leer el archivo: {error}") from None
+        raise ValueError(f"Could not read the file: {error}") from None
 
     missing_columns = [c for c in _INDEX_COLUMNS if c not in df.columns]
     if missing_columns:
-        raise ValueError(f"Faltan columnas requeridas: {', '.join(missing_columns)}.")
+        raise ValueError(f"Missing required columns: {', '.join(missing_columns)}.")
 
     parameter_columns = [c for c in df.columns if c not in _INDEX_COLUMNS]
     known_subbasin_set = set(known_subbasin_ids)
@@ -62,18 +62,18 @@ def parse_hru_import_csv(
             subbasin_id = int(row["subbasin"])
             hru_id = int(row["hru"])
         except (TypeError, ValueError):
-            errors.append(f"subbasin/hru inválido: '{row['subbasin']}'/'{row['hru']}'.")
+            errors.append(f"Invalid subbasin/hru: '{row['subbasin']}'/'{row['hru']}'.")
             continue
 
         if subbasin_id not in known_subbasin_set:
-            errors.append(f"Subcuenca {subbasin_id}: no existe en este proyecto.")
+            errors.append(f"Subbasin {subbasin_id}: does not exist in this project.")
             continue
 
         known_hrus = hru_ids_by_subbasin.setdefault(
             subbasin_id, list_subbasin_hru_ids(txtinout_dir, subbasin_id)
         )
         if hru_id not in known_hrus:
-            errors.append(f"Subcuenca {subbasin_id}, HRU {hru_id}: no existe en este proyecto.")
+            errors.append(f"Subbasin {subbasin_id}, HRU {hru_id}: does not exist in this project.")
             continue
 
         for column in parameter_columns:
@@ -83,7 +83,7 @@ def parse_hru_import_csv(
             try:
                 value = float(raw_value)
             except (TypeError, ValueError):
-                errors.append(f"Subcuenca {subbasin_id}, HRU {hru_id}, {column}: '{raw_value}' no es un número.")
+                errors.append(f"Subbasin {subbasin_id}, HRU {hru_id}, {column}: '{raw_value}' is not a number.")
                 continue
             staged.setdefault((subbasin_id, hru_id), {})[column] = value
 
