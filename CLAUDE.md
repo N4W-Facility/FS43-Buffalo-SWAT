@@ -77,7 +77,13 @@ vez de CSV — ver esa pestaña más abajo.
   (`generar_resumen_coberturas.build_land_use_summary`), cachea resultados
   en `project.json`, y agrega un tercer bloque "Gráficas": barra de
   coberturas por subcuenca (o total de cuenca) con selector, construida
-  sobre `land_use_by_subbasin.csv`.
+  sobre `land_use_by_subbasin.csv`. Las dos casillas ("Wetlands summary" /
+  "HRU summary") arrancan **tildadas por default** y cada una tiene una
+  línea chica debajo explicando qué calcula (revisión de textos de ayuda,
+  2026-08-13): antes arrancaban destildadas sin ninguna pista de qué
+  generaba cada una, y si el usuario apretaba "Run" sin tocar nada no
+  pasaba nada, sin ningún mensaje — ahora ese caso muestra
+  `summary.no_selection_hint` en vez de fallar en silencio.
 - **Pestaña Wetland Parameters (.pnd)** (`ui/tab_wetlands.py` + `ui/wetland_editor_window.py`):
   tabla de solo lectura (`ttk.Treeview`, no CTk — necesario para scroll
   nativo en ambos ejes con muchas subcuencas) con los 20 parámetros de
@@ -142,7 +148,7 @@ vez de CSV — ver esa pestaña más abajo.
   `scenarios.hru_draft.list_subbasin_hru_ids`) y que el valor sea
   numérico — un nombre de parámetro que no existe en esa HRU puntual
   recién se rechaza en Materialize (`HRUFile.set_value` levanta
-  `HRUModificationError`, "no se crean parámetros nuevos"). El resultado
+  `HRUModificationError`, "new parameters are not created"). El resultado
   puebla un staging en memoria (`dict[(subbasin_id, hru_id), dict]`)
   marcado con `*` sobre la tabla, igual que Wetlands. Diferencia
   importante de diseño: el Materialize de Wetlands es síncrono (a lo sumo
@@ -901,8 +907,8 @@ vez de CSV — ver esa pestaña más abajo.
   calcula `plan_area_allocation` recorriendo las HRU reales de esas
   coberturas puntuales. Si hay déficit, la subcuenca entera se omite y se
   reporta (`result.skipped`) con un mensaje que da el área máxima
-  alcanzable desglosada por cobertura fuente (ej. "área disponible ... —
-  FRST: 50.00 ha disponibles") — a diferencia de la sección manual de
+  alcanzable desglosada por cobertura fuente (ej. "exceeds the area
+  available ... — FRST: 50.00 ha available") — a diferencia de la sección manual de
   "Apply by area", donde un déficit no bloquea nada y el plan se aplica
   parcial con una nota en el preview (`area_preview_deficit_line`), acá el
   usuario explícitamente prefirió que cualquier déficit fuerce corregir el
@@ -1127,6 +1133,19 @@ falta validar contra un `.hru` real de rev. 670): `docs/hru_module.md`.
 - Manejo de errores del subproceso: la app debe distinguir entre "SWAT
   terminó con error" (código de salida, contenido de log) y "no se pudo
   parsear la salida", y comunicar cuál ocurrió al usuario.
+- **Todo texto de cara al usuario va en inglés** — no solo los strings de
+  `resources/strings/en.json`, también cualquier mensaje de excepción que
+  pueda llegar a pantalla (`ValueError`/`raise ...Error(...)` en
+  `swat_io/`, `scenarios/`, `engine/`, `viz/`, incluidas las líneas de log
+  en vivo de los motores de batch). Encontrado y corregido el 2026-08-13
+  (revisión completa de textos, pestaña por pestaña): ~150 mensajes de
+  error/validación/log habían quedado en español pese a que el resto de
+  la UI siempre fue en inglés — sin ninguna regla escrita al respecto,
+  ese idioma se había ido colando módulo por módulo a medida que se
+  agregaban validaciones nuevas. Los docstrings/comentarios del código
+  siguen en español (convención ya establecida de este archivo); la
+  distinción es entre lo que el código dice de sí mismo (español) y lo
+  que el usuario final llega a leer en la app (inglés).
 
 ### Operaciones largas y UI no bloqueante
 
