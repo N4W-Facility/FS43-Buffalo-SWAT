@@ -47,6 +47,7 @@ class App(ctk.CTk):
         )
         self._wetlands_tab = WetlandsTab(self._tab_bar, config)
         self._hru_tab = HRUsTab(self._tab_bar, config, on_run_state_changed=self._on_hru_run_state_changed)
+        self._nbs_tab = NbSTab(self._tab_bar, config, on_run_state_changed=self._on_nbs_tab_run_state_changed)
         self._run_tab = RunTab(self._tab_bar, config, on_run_state_changed=self._on_run_tab_run_state_changed)
         self._results_tab = ResultsTab(
             self._tab_bar, config, on_run_state_changed=self._on_results_tab_run_state_changed
@@ -58,18 +59,22 @@ class App(ctk.CTk):
             self._tab_bar, config, on_run_state_changed=self._on_hru_results_tab_run_state_changed
         )
         self._batch_tab = BatchTab(self._tab_bar, config, on_run_state_changed=self._on_batch_tab_run_state_changed)
-        self._nbs_tab = NbSTab(self._tab_bar, config, on_run_state_changed=self._on_nbs_tab_run_state_changed)
 
+        # Orden de pestañas = orden de flujo de trabajo (2026-08-13, pedido
+        # explícito del usuario): configurar el escenario (Wetlands/HRUs/NbS)
+        # antes de correrlo (Run) o correrlo en serie (Batch, al final,
+        # porque orquesta todo lo anterior -- incluida una NbS ya definida
+        # acá arriba, para "NbS area batch").
         self._tab_bar.add_tab("project", "tab.project", self._project_tab, enabled=True)
         self._tab_bar.add_tab("summary", "tab.summary", self._summary_tab, enabled=False)
         self._tab_bar.add_tab("wetlands", "tab.wetlands", self._wetlands_tab, enabled=False)
         self._tab_bar.add_tab("hru", "tab.hru", self._hru_tab, enabled=False)
+        self._tab_bar.add_tab("nbs", "tab.nbs", self._nbs_tab, enabled=False)
         self._tab_bar.add_tab("run", "tab.run", self._run_tab, enabled=False)
         self._tab_bar.add_tab("results", "tab.results", self._results_tab, enabled=False)
         self._tab_bar.add_tab("sub_results", "tab.sub_results", self._sub_results_tab, enabled=False)
         self._tab_bar.add_tab("hru_results", "tab.hru_results", self._hru_results_tab, enabled=False)
         self._tab_bar.add_tab("batch", "tab.batch", self._batch_tab, enabled=False)
-        self._tab_bar.add_tab("nbs", "tab.nbs", self._nbs_tab, enabled=False)
 
     def _on_project_opened(self, project_dir: Path, metadata: ProjectMetadata) -> None:
         self._tab_bar.set_enabled("summary", True)

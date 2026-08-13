@@ -78,7 +78,7 @@ vez de CSV — ver esa pestaña más abajo.
   en `project.json`, y agrega un tercer bloque "Gráficas": barra de
   coberturas por subcuenca (o total de cuenca) con selector, construida
   sobre `land_use_by_subbasin.csv`.
-- **Pestaña Wetlands (.pnd)** (`ui/tab_wetlands.py` + `ui/wetland_editor_window.py`):
+- **Pestaña Wetland Parameters (.pnd)** (`ui/tab_wetlands.py` + `ui/wetland_editor_window.py`):
   tabla de solo lectura (`ttk.Treeview`, no CTk — necesario para scroll
   nativo en ambos ejes con muchas subcuencas) con los 20 parámetros de
   "Wetland inputs" como filas y las subcuencas como columnas, leída en
@@ -91,7 +91,7 @@ vez de CSV — ver esa pestaña más abajo.
   `tool_outputs/wetland_params_draft.csv` (`scenarios/wetland_draft.py`)
   como respaldo — ese CSV se reconstruye desde los `.pnd` reales cada vez
   que se abre la ventana, nunca es una segunda fuente de verdad.
-  La pestaña Wetlands también soporta modificación masiva: "Load CSV" lee
+  La pestaña Wetland Parameters también soporta modificación masiva: "Load CSV" lee
   un CSV con la misma estructura que `wetland_summary.csv` (columnas con
   sufijo de unidad, ver `swat_io/summary.py`), permite carga parcial
   (subconjunto de subcuencas/parámetros), valida columnas/subcuencas/rangos
@@ -104,7 +104,7 @@ vez de CSV — ver esa pestaña más abajo.
   staging se pierde si se cambia de proyecto o se cierra la app sin
   materializar; deliberadamente no se persiste a disco para no crear una
   segunda fuente de verdad además del draft ya existente.
-- **Pestaña HRUs (.hru)** (`ui/tab_hru.py` + `ui/hru_editor_window.py` +
+- **Pestaña HRU Parameters (.hru)** (`ui/tab_hru.py` + `ui/hru_editor_window.py` +
   `scenarios/hru_draft.py`): a diferencia de Wetlands, una subcuenca tiene
   N archivos `.hru` (uno por HRU), no uno solo, así que la tabla está
   acotada a la subcuenca elegida en un selector: filas = HRU, columnas =
@@ -185,7 +185,7 @@ vez de CSV — ver esa pestaña más abajo.
   tocada y la reporta en el mensaje de resultado si queda fuera de
   tolerancia.
 - **`engine/configure.py`**: copia `TxtInOut` y escribe `.pnd`.
-- **Pestaña Run** (`ui/tab_run.py` + `engine/run.py`): quinta pestaña,
+- **Pestaña Run** (`ui/tab_run.py` + `engine/run.py`): sexta pestaña,
   habilitada al abrir proyecto igual que Wetlands/HRUs/Summary. Cubre el
   paso 2 del resumen del proyecto (ejecutar `swat2012.exe` como
   subproceso), que hasta ahora no existía en ningún lugar del código.
@@ -246,7 +246,7 @@ vez de CSV — ver esa pestaña más abajo.
   archivo queda byte a byte intacto.
 - **Pestaña Results (`output.rch`)** (`ui/tab_results.py` +
   `swat_io/rch_parser.py` + `viz/rch_chart.py` + `viz/shapefile_map.py` +
-  `viz/shapefile_reader.py`): sexta pestaña, cubre el paso 3 del resumen
+  `viz/shapefile_reader.py`): séptima pestaña, cubre el paso 3 del resumen
   del proyecto para `output.rch` específicamente (caudal y cargas por
   tramo) — el resto de `output.*` sigue sin empezar. A diferencia de
   Wetlands/HRUs/Run, queda habilitada con el proyecto abierto aunque
@@ -333,7 +333,7 @@ vez de CSV — ver esa pestaña más abajo.
   mismo rigor que `output.hru`); los 24 campos de variable restantes SÍ
   están separados por espacios de forma confiable en ese mismo dataset.
 - **Pestaña HRU Results (`output.hru`)** (`ui/tab_hru_results.py` +
-  `swat_io/hru_output_parser.py`): séptima pestaña, cubre el paso 3 del
+  `swat_io/hru_output_parser.py`): novena pestaña, cubre el paso 3 del
   resumen del proyecto para `output.hru` (balance por HRU) — pedido
   explícito del usuario (2026-08-03): serie de tiempo por subcuenca, por
   HRU y por variable, **sin nada espacial** (a diferencia de Results/.rch,
@@ -421,7 +421,7 @@ vez de CSV — ver esa pestaña más abajo.
 
 - **Pestaña Batch Scenarios** (`ui/tab_batch.py` + `engine/batch_run.py` +
   `scenarios/land_cover_config.py` + `scenarios/land_cover_reallocation.py`):
-  octava pestaña, para correr en batch una serie de escenarios de cambio de
+  décima pestaña, para correr en batch una serie de escenarios de cambio de
   cobertura (ej. "aumentar bosque a 10%, 20%, 30% del área de cada
   subcuenca", tipo reforestación/deforestación) tomando el proyecto
   abierto como referencia fija — pedido explícito del usuario
@@ -691,7 +691,10 @@ vez de CSV — ver esa pestaña más abajo.
 
 - **Pestaña NbS** (`ui/tab_nbs.py` + `ui/nbs_wizard_window.py` +
   `ui/nbs_operation_dialog.py` + `scenarios/nbs.py` + `scenarios/nbs_analysis.py`
-  + `scenarios/nbs_apply.py`, 2026-08-11): novena pestaña, asistente para
+  + `scenarios/nbs_apply.py`, 2026-08-11): quinta pestaña (movida acá el
+  2026-08-13, ver nota de orden en `ui/app.py` — antes era la última;
+  ahora queda junto a Wetland Parameters/HRU Parameters, las otras formas
+  de configurar un escenario antes de correrlo), asistente para
   construir y aplicar masivamente "Soluciones basadas en la Naturaleza"
   (NbS) — cambios de cobertura vegetal reutilizables (ej. "restauración de
   bosque") sobre las HRU que el usuario elija. Pedido explícito del
@@ -987,7 +990,7 @@ impacto mayor cuando crea una cobertura nueva: escribe sobre
 `plant.dat`, compartido por **toda la cuenca** (no por HRU/subcuenca como
 el resto de lo que la app toca hoy). Decisión
 explícita del usuario (2026-07-31, reafirmada al
-construir la pestaña HRUs, y otra vez al construir NbS el 2026-08-11):
+construir la pestaña HRU Parameters, y otra vez al construir NbS el 2026-08-11):
 no bloquear esto en código por ahora — quedará
 documentado en un futuro manual de usuario que abrir la carpeta calibrada
 directamente es bajo su propio riesgo. No "arreglar" esto de oficio sin
@@ -1016,7 +1019,7 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 
 | Archivo | Rol en la app |
 |---|---|
-| `.pnd` (por subcuenca) | Único archivo editable por el usuario. Expone los 20 parámetros de la sección "Wetland inputs": `WET_FR` (fracción de subcuenca que drena al humedal), `WET_NSA` / `WET_NVOL` (área y volumen a nivel normal), `WET_MXSA` / `WET_MXVOL` (área y volumen máximos), `WET_VOL` (volumen inicial), `WET_K` (conductividad hidráulica del fondo), sedimento (`WET_SED`, `WET_NSED`), settling de N/P (`PSETLW1/2`, `NSETLW1/2`), y nutrientes/calidad de agua (`CHLAW`, `SECCIW`, `WET_NO3`, `WET_SOLP`, `WET_ORGN`, `WET_ORGP`, `WETEVCOEFF`). Editable hoy vía la pestaña Wetlands (.pnd) — ver "Estado actual". |
+| `.pnd` (por subcuenca) | Único archivo editable por el usuario. Expone los 20 parámetros de la sección "Wetland inputs": `WET_FR` (fracción de subcuenca que drena al humedal), `WET_NSA` / `WET_NVOL` (área y volumen a nivel normal), `WET_MXSA` / `WET_MXVOL` (área y volumen máximos), `WET_VOL` (volumen inicial), `WET_K` (conductividad hidráulica del fondo), sedimento (`WET_SED`, `WET_NSED`), settling de N/P (`PSETLW1/2`, `NSETLW1/2`), y nutrientes/calidad de agua (`CHLAW`, `SECCIW`, `WET_NO3`, `WET_SOLP`, `WET_ORGN`, `WET_ORGP`, `WETEVCOEFF`). Editable hoy vía la pestaña Wetland Parameters (.pnd) — ver "Estado actual". |
 | `.sub` | Vincula la subcuenca con el HRU/área que drena al humedal. Se lee para construir la UI de selección de subcuencas con humedal; no se edita por escenario. |
 | `.bsn` | Parámetros globales de cuenca. Fuera de alcance: nunca se modifica por escenario. |
 | `.fig` / `.cio` | Topología del watershed y control maestro de la corrida (fechas, opciones de impresión). Se mantienen intactos entre escenarios salvo que el usuario cambie explícitamente el periodo simulado. |
@@ -1025,7 +1028,7 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
 | `output.hru` | Balance por unidad de respuesta hidrológica. Organizado en base SQLite (no CSV, ver pestaña HRU Results) y explorado por subcuenca/HRU/variable (gráfica + export CSV) desde la pestaña HRU Results — ver "Estado actual". |
 | `output.mgt` | Operaciones de manejo por HRU; se lee como texto plano junto con las demás salidas. |
 | `output.std` | Resumen general de la corrida. |
-| `.hru` (por HRU) | Parámetros físicos/agronómicos de cada HRU (`HRU_FR`, `SLSUBBSN`, `OV_N`, `CANMX`, `ESCO`, `EPCO`, etc.). Editable hoy vía la pestaña HRUs (`swat_io.hru`) y, para `CANMX`/`OV_N`/`RSDIN`, vía Aplicar NbS (`swat_io.mgt`... ver pestaña NbS más arriba). |
+| `.hru` (por HRU) | Parámetros físicos/agronómicos de cada HRU (`HRU_FR`, `SLSUBBSN`, `OV_N`, `CANMX`, `ESCO`, `EPCO`, etc.). Editable hoy vía la pestaña HRU Parameters (`swat_io.hru`) y, para `CANMX`/`OV_N`/`RSDIN`, vía Aplicar NbS (`swat_io.mgt`... ver pestaña NbS más arriba). |
 | `.mgt` (por HRU) | Cabecera de condición inicial/manejo general (`IGRO`, `PLANT_ID`, `CN2`, etc., misma gramática `valor \| CODIGO : descripción` que `.pnd`) más el calendario completo de operaciones de manejo (siembra, cosecha, pastoreo, fertilización...), texto de ancho fijo sin nombres de columna en el archivo. Antes solo se leía como parte de `output.mgt`; editable hoy vía Aplicar NbS (`swat_io.mgt`, ver pestaña NbS más arriba) — nunca por la UI de HRUs. |
 | `plant.dat` / `crop.dat` | Base vegetal: fisiología de cada `PLANT_ID` (registros de 5 líneas, ver `swat_io.plant`). El nombre real lo indica `PLANTDB` en `file.cio` — nunca se asume. Editable hoy solo cuando una NbS crea una cobertura nueva (Aplicar NbS agrega un registro nuevo con `ICNUM = max(ICNUM)+1`; nunca modifica un registro existente). Compartido por **toda la cuenca**, no por HRU/subcuenca. |
 
@@ -1042,7 +1045,7 @@ ni del subproceso SWAT. Su parte de solo lectura (inventario y resumen de
 coberturas) se expone vía `generar_resumen_coberturas.py`, invocado en
 hilo de fondo desde la pestaña Summary de la UI (ver "Estado actual").
 Su edición de un solo parámetro/HRU (`get_value`/`set_value`) sí está
-conectada a la UI desde la pestaña HRUs (`ui/hru_editor_window.py`, ver
+conectada a la UI desde la pestaña HRU Parameters (`ui/hru_editor_window.py`, ver
 "Estado actual"). Su API de modificación masiva (`HRUSelection`/
 `HRUModificationRule`, ver más abajo) sigue sin conectarse a ningún flujo
 de la interfaz — queda lista para un futuro flujo de edición masiva de

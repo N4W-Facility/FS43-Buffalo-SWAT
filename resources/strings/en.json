@@ -3,8 +3,8 @@
 
   "tab.project": "Project",
   "tab.summary": "Summary",
-  "tab.wetlands": "Wetlands (.pnd)",
-  "tab.hru": "HRUs (.hru)",
+  "tab.wetlands": "Wetland Parameters (.pnd)",
+  "tab.hru": "HRU Parameters (.hru)",
   "tab.run": "Run",
   "tab.results": "Results (.rch)",
   "tab.sub_results": "Results (.sub)",
