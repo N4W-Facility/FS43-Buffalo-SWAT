@@ -14,7 +14,7 @@
 
   "wetlands_tab.title": "Wetland Parameters (.pnd)",
   "wetlands_tab.subbasin_label": "Subbasin:",
-  "wetlands_tab.instructions": "Each column below is a subbasin and each row a wetland parameter (.pnd). Click a subbasin's header -- or select it above and use \"Edit in .pnd\" -- to open its full editor. Double-click a cell to edit a single value. \"Load CSV\" stages bulk changes without writing them yet; \"Materialize to SWAT\" writes staged changes to the real .pnd files.",
+  "wetlands_tab.instructions": "Each column below is a subbasin and each row a wetland parameter (.pnd). Click a subbasin's header -- or select it above and use \"Edit in .pnd\" -- to open its full editor. Double-click a cell to edit a single value. \"Load CSV\" stages bulk changes without writing them yet; \"Materialize to SWAT\" writes staged changes to the real .pnd files. \"Load CSV\" expects the same column format as the Wetlands summary CSV (Summary tab) -- run that first to get a ready-made file, edit it, then load it here.",
   "wetlands_tab.edit_button": "Edit in .pnd",
 
   "hru_tab.title": "HRU Parameters (.hru)",
@@ -280,6 +280,7 @@
   "hru_out_var.TVAP": "Nitrogen/phosphorus vapor loss, kg/ha (TVAP)",
 
   "batch_tab.title": "Batch Scenarios",
+  "batch_tab.subtitle": "Run a series of land-cover change scenarios (e.g. increase forest to 10%, 20%, 30% of each subbasin's area): configure a target coverage, a percentage series, and donor priority in a CSV (\"Download template\" scans this project and gives you one to start from), then each percentage runs an independent copy of the project through swat2012.exe.",
   "batch_tab.disabled_hint": "Open a project in the Project tab first.",
   "batch_tab.destination_label": "Destination folder",
   "batch_tab.destination_not_set": "Not set",
@@ -380,6 +381,7 @@
   "project.edit_title": "Edit Project",
   "project.error.no_txtinout": "This folder does not contain a TxtInOut directory.",
   "project.shapefiles_title": "Shapefiles (for the Results map)",
+  "project.shapefiles_hint": "Optional -- used to draw the map in the Results tabs. Leave blank if you don't need it.",
   "project.subbasin_shp_label": "Subbasin shapefile (.shp)",
   "project.reach_shp_label": "Reach shapefile (.shp)",
   "project.shp_not_configured": "Not configured",

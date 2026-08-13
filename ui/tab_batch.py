@@ -115,8 +115,18 @@ class BatchTab(ctk.CTkFrame):
         )
         title.grid(row=0, column=0, sticky="w", pady=(0, 12))
 
+        subtitle = ctk.CTkLabel(
+            frame,
+            text=self._config.text("batch_tab.subtitle"),
+            text_color=self._colors.get("text_secondary"),
+            anchor="w",
+            justify="left",
+        )
+        subtitle.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        bind_responsive_wraplength(subtitle)
+
         config_card = ctk.CTkFrame(frame)
-        config_card.grid(row=1, column=0, sticky="ew")
+        config_card.grid(row=2, column=0, sticky="ew")
         config_card.columnconfigure(0, weight=1)
 
         dest_row = ctk.CTkFrame(config_card, fg_color="transparent")
@@ -156,7 +166,7 @@ class BatchTab(ctk.CTkFrame):
         self._csv_load_button.grid(row=0, column=2, sticky="ne", padx=(8, 0))
 
         separator_1 = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
-        separator_1.grid(row=2, column=0, sticky="ew", pady=16)
+        separator_1.grid(row=3, column=0, sticky="ew", pady=16)
 
         preview_title = ctk.CTkLabel(
             frame,
@@ -165,7 +175,7 @@ class BatchTab(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, weight="bold"),
             anchor="w",
         )
-        preview_title.grid(row=3, column=0, sticky="w")
+        preview_title.grid(row=4, column=0, sticky="w")
 
         self._preview_label = ctk.CTkLabel(
             frame,
@@ -175,13 +185,13 @@ class BatchTab(ctk.CTkFrame):
             justify="left",
             wraplength=880,
         )
-        self._preview_label.grid(row=4, column=0, sticky="ew", pady=(4, 16))
+        self._preview_label.grid(row=5, column=0, sticky="ew", pady=(4, 16))
 
         separator_2 = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
-        separator_2.grid(row=5, column=0, sticky="ew", pady=(0, 16))
+        separator_2.grid(row=6, column=0, sticky="ew", pady=(0, 16))
 
         output_row = ctk.CTkFrame(frame, fg_color="transparent")
-        output_row.grid(row=6, column=0, sticky="ew", pady=(0, 12))
+        output_row.grid(row=7, column=0, sticky="ew", pady=(0, 12))
         ctk.CTkLabel(
             output_row, text=self._config.text("batch_tab.output_organize_label"),
             text_color=self._colors.get("text_secondary"),
@@ -197,7 +207,7 @@ class BatchTab(ctk.CTkFrame):
         self._output_hru_check.pack(side="left", padx=(12, 0))
 
         controls = ctk.CTkFrame(frame, fg_color="transparent")
-        controls.grid(row=7, column=0, sticky="ew")
+        controls.grid(row=8, column=0, sticky="ew")
         controls.columnconfigure(0, weight=1)
 
         self._status_label = ctk.CTkLabel(
@@ -241,10 +251,10 @@ class BatchTab(ctk.CTkFrame):
             text_color=self._colors.get("text_secondary"),
             anchor="w",
         )
-        log_label.grid(row=8, column=0, sticky="w", pady=(16, 4))
+        log_label.grid(row=9, column=0, sticky="w", pady=(16, 4))
 
         log_frame = ctk.CTkFrame(frame, fg_color=self._colors.get("surface"))
-        log_frame.grid(row=9, column=0, sticky="ew")
+        log_frame.grid(row=10, column=0, sticky="ew")
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
@@ -255,9 +265,9 @@ class BatchTab(ctk.CTkFrame):
         self._log_text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         separator_3 = ctk.CTkFrame(frame, height=1, fg_color=self._colors.get("border"))
-        separator_3.grid(row=10, column=0, sticky="ew", pady=16)
+        separator_3.grid(row=11, column=0, sticky="ew", pady=16)
 
-        self._build_nbs_area_batch_card(frame, row=11)
+        self._build_nbs_area_batch_card(frame, row=12)
 
         return frame
 

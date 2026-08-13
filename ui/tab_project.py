@@ -152,11 +152,21 @@ class ProjectTab(ctk.CTkFrame):
         )
         title.grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
 
+        hint = ctk.CTkLabel(
+            card,
+            text=self._config.text("project.shapefiles_hint"),
+            text_color=self._colors.get("text_secondary"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+        )
+        hint.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
+
         self._subbasin_shp_field, self._subbasin_shp_browse_button, self._subbasin_shp_error_label = (
-            self._build_shp_row(card, row=1, label_key="project.subbasin_shp_label", on_browse=self._on_browse_subbasin_shp)
+            self._build_shp_row(card, row=2, label_key="project.subbasin_shp_label", on_browse=self._on_browse_subbasin_shp)
         )
         self._reach_shp_field, self._reach_shp_browse_button, self._reach_shp_error_label = self._build_shp_row(
-            card, row=3, label_key="project.reach_shp_label", on_browse=self._on_browse_reach_shp
+            card, row=4, label_key="project.reach_shp_label", on_browse=self._on_browse_reach_shp
         )
 
         return card
