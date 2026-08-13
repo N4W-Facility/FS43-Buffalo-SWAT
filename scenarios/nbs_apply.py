@@ -43,6 +43,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from scenarios.activity_log import log_action
 from swat_io.common.atomic_write import atomic_write_bytes
 from swat_io.discovery import discover_subbasins
 from swat_io.hru.models import HRURawLine
@@ -191,6 +192,7 @@ def sync_new_coverage_to_plant_dat(project_dir: str | Path, nbs: NbSDefinition) 
             plant_dat.append_record(record)
             atomic_write_bytes(txtinout_dir / "plant.dat", plant_dat.render().encode(plant_dat.encoding))
             coverage.icnum = record.icnum
+            log_action(project_dir, "NBS", f"Created plant.dat record for new coverage '{coverage.cpnm}' (ICNUM={record.icnum}).")
             return nbs
 
     conflicting = plant_dat.get_record_by_cpnm(coverage.cpnm)
@@ -206,6 +208,7 @@ def sync_new_coverage_to_plant_dat(project_dir: str | Path, nbs: NbSDefinition) 
         record.set(name, value)
     atomic_write_bytes(txtinout_dir / "plant.dat", plant_dat.render().encode(plant_dat.encoding))
     coverage.icnum = record.icnum
+    log_action(project_dir, "NBS", f"Updated plant.dat record for coverage '{coverage.cpnm}' (ICNUM={record.icnum}).")
     return nbs
 
 
@@ -339,6 +342,13 @@ def apply_nbs(project_dir: str | Path, nbs: NbSDefinition, targets: list[tuple[i
         except Exception as exc:  # noqa: BLE001 - se reporta y se sigue, un fallo puntual no aborta el lote
             result = NbSApplyHRUResult(subbasin, hru, "error", str(exc))
         report.results.append(result)
+
+    log_action(
+        project_dir,
+        "NBS_APPLY",
+        f"Applied NbS '{nbs.name}' (cpnm={cpnm}): {report.applied_count}/{len(targets)} HRU(s) applied, "
+        f"{report.error_count} error(s).",
+    )
 
     return report
 

@@ -20,6 +20,7 @@ from tkinter import ttk
 import customtkinter as ctk
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from scenarios.validation import validate_field_value
 from scenarios.wetland_draft import build_wetland_draft, save_wetland_draft
 from swat_io.discovery import discover_subbasins
@@ -226,6 +227,9 @@ class WetlandEditorWindow(ctk.CTkToplevel):
         except OSError as error:
             self._set_status(self._config.text("wetland_editor.error").format(error=str(error)), error=True)
             return
+
+        changed = ", ".join(f"{field_id}={value}" for field_id, value in values.items())
+        log_action(self._project_dir, "WETLANDS", f"Saved subbasin {self._current_subbasin}: {changed}")
 
         self._exit_edit_mode()
         self._render_fields(editable=False)

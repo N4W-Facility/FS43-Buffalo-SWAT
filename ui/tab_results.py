@@ -47,6 +47,7 @@ import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from scenarios.project import ProjectMetadata
 from swat_io.cio_parser import CioParseError, parse_run_settings
 from swat_io.rch_parser import (
@@ -281,6 +282,7 @@ class ResultsTab(ctk.CTkFrame):
             timeseries = build_rch_timeseries(raw, run_settings)
             dest_dir = rch_timeseries_dir(project_dir)
             written = export_rch_timeseries_csvs(timeseries, dest_dir)
+            log_action(project_dir, "RESULTS_RCH", f"Organized output.rch: {len(written)} reach(es) written to '{dest_dir}'.")
             return {"timeseries": timeseries, "written": written, "dest_dir": dest_dir}
 
         run_in_background(

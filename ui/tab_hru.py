@@ -51,6 +51,7 @@ import customtkinter as ctk
 import pandas as pd
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from scenarios.hru_draft import (
     HRU_FR_SUM_TOLERANCE,
     HRU_FR_TARGET_SUM,
@@ -530,7 +531,8 @@ class HRUsTab(ctk.CTkFrame):
         ConfirmDialog(self, self._config, message=message, on_confirm=self._start_materialize)
 
     def _start_materialize(self) -> None:
-        txtinout_dir = self._project_dir / "TxtInOut"
+        project_dir = self._project_dir
+        txtinout_dir = project_dir / "TxtInOut"
         staged = dict(self._staged)
 
         self._set_controls_enabled(False)
@@ -565,6 +567,13 @@ class HRUsTab(ctk.CTkFrame):
                 total = subbasin_hru_fr_sum(hru_files)
                 if total is not None and abs(total - HRU_FR_TARGET_SUM) > HRU_FR_SUM_TOLERANCE:
                     hru_fr_warnings[subbasin_id] = total
+
+            log_action(
+                project_dir,
+                "HRU",
+                f"Materialized CSV import/inline edits: {len(written_keys)} HRU(s) written"
+                + (f", {len(errors)} error(s): {'; '.join(errors)}" if errors else "."),
+            )
 
             return {"written": written_keys, "errors": errors, "hru_fr_warnings": hru_fr_warnings}
 

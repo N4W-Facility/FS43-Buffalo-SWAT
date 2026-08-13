@@ -21,6 +21,7 @@ from tkinter import ttk
 import customtkinter as ctk
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from scenarios.hru_draft import load_subbasin_hru_files, write_hru_values
 from swat_io.discovery import discover_subbasins
 from swat_io.hru.models import HRUParameterLine, ParamValue
@@ -47,6 +48,7 @@ class HRUEditorWindow(ctk.CTkToplevel):
         super().__init__(master, **kwargs)
         self._config = config
         self._colors = palette(config)
+        self._project_dir = project_dir
         self._txtinout_dir = project_dir / "TxtInOut"
 
         self.title(config.text("hru_editor.title"))
@@ -272,6 +274,11 @@ class HRUEditorWindow(ctk.CTkToplevel):
         except OSError as error:
             self._set_status(self._config.text("hru_editor.error").format(error=str(error)), error=True)
             return
+
+        changed = ", ".join(f"{name}={value}" for name, value in values.items())
+        log_action(
+            self._project_dir, "HRU", f"Saved subbasin {self._current_subbasin} HRU {self._current_hru}: {changed}"
+        )
 
         self._exit_edit_mode()
         self._render_fields(editable=False)

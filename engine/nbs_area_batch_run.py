@@ -47,6 +47,7 @@ from engine.configure import create_working_scenario
 from engine.run import run_scenario
 from generar_resumen_coberturas import generar_resumen_coberturas
 from generar_resumen_humedales import generar_resumen_humedales
+from scenarios.activity_log import log_action
 from scenarios.nbs import NbSDefinition
 from scenarios.nbs_apply import apply_nbs, write_apply_report_csv
 from scenarios.nbs_area_batch import OutputOrganizeOptions, scale_allocations, write_area_batch_step_report_csv
@@ -130,6 +131,12 @@ def run_nbs_area_batch(
     destination_dir.mkdir(parents=True, exist_ok=True)
     output_options = output_options or OutputOrganizeOptions()
 
+    log_action(
+        reference_project_dir,
+        "NBS_BATCH",
+        f"Started NbS area batch to '{destination_dir}': nbs='{nbs.name}', series={pct_series}.",
+    )
+
     def report(message: str) -> None:
         if on_progress is not None:
             on_progress(message)
@@ -199,10 +206,24 @@ def run_nbs_area_batch(
                 )
             )
             report(f"{step_label}: done.")
+            log_action(
+                scenario_dir,
+                "NBS_BATCH",
+                f"NbS area batch step {folder_name} completed: nbs='{nbs.name}', "
+                f"{applied_count} HRU(s) applied, deficit={total_deficit_ha:.2f} ha.",
+            )
         except Exception as error:  # noqa: BLE001 - un paso puntual no debe abortar el batch completo
             results.append(
                 NbSAreaScenarioResult(target_pct=pct, scenario_dir=scenario_dir, status="error", error=str(error))
             )
             report(f"{step_label}: error -- {error}")
+            log_action(reference_project_dir, "NBS_BATCH", f"NbS area batch step {folder_name} failed: {error}")
+
+    log_action(
+        reference_project_dir,
+        "NBS_BATCH",
+        f"Finished NbS area batch to '{destination_dir}': "
+        f"{sum(1 for r in results if r.status == 'ok')}/{len(results)} step(s) succeeded.",
+    )
 
     return results

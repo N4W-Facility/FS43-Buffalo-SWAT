@@ -33,6 +33,7 @@ import customtkinter as ctk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from swat_io.cio_parser import CioParseError, parse_run_settings
 from swat_io.hru_output_parser import (
     HRU_OUTPUT_VARIABLE_COLUMNS,
@@ -261,7 +262,14 @@ class HruResultsTab(ctk.CTkFrame):
         def work(report_progress: Callable[[str], None]) -> dict:
             report_progress(self._config.text("hru_results_tab.organizing"))
             run_settings = parse_run_settings(cio_path)
-            return build_hru_output_database(hru_path, run_settings, db_path, report_progress=report_progress)
+            result = build_hru_output_database(hru_path, run_settings, db_path, report_progress=report_progress)
+            log_action(
+                project_dir,
+                "RESULTS_HRU",
+                f"Organized output.hru: {result['rows']} row(s), {result['hrus']} HRU(s), "
+                f"{result['subbasins']} subbasin(s) written to '{db_path}'.",
+            )
+            return result
 
         run_in_background(
             self,

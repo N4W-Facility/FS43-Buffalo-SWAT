@@ -1021,6 +1021,49 @@ Actualizar este bloque a medida que la interfaz siga creciendo.
   de trabajo, para permitir comparar múltiples escenarios entre sí y contra
   la línea base sin interferencia.
 
+## Log de actividad (`scenarios/activity_log.py`)
+
+Pedido explícito del usuario (2026-08-13): quería poder ver, en un solo
+lugar, qué hizo la app durante toda la vida de un proyecto — no solo los
+reportes puntuales que ya escriben algunas features (`batch_report.json`,
+`nbs_area_batch_report.csv`, `nbs_apply_report_*.csv`), sino una traza
+cronológica de **toda** acción relevante. `log_action(project_dir,
+category, message)` agrega una línea `[timestamp] [CATEGORY] message` a
+`tool_outputs/activity_log.txt` — texto plano, append-only, nunca se
+sobrescribe ni se rota, se va acumulando durante toda la vida del
+proyecto. Nunca lanza (un fallo de E/S al escribir el log se descarta en
+silencio: registrar una acción no debe poder tumbar la acción real). No
+reemplaza los reportes CSV/JSON puntuales que ya existían — son
+complementarios, esos siguen siendo la fuente detallada tabular de una
+operación puntual.
+
+Categorías y dónde se llama (una llamada por operación que escribe algo o
+corre algo, no por cada paso interno):
+
+| Categoría | Dónde |
+|---|---|
+| `PROJECT` | Abrir proyecto, editar metadata, cambiar ruta de shapefiles (`ui/tab_project.py`) |
+| `WETLANDS` | Guardar edición individual de un `.pnd` (`ui/wetland_editor_window.py`) y Materialize de CSV import (`ui/tab_wetlands.py`) |
+| `HRU` | Guardar edición individual/inline de un `.hru` (`ui/hru_editor_window.py`) y Materialize de CSV import/edición inline (`ui/tab_hru.py`, corre en hilo de fondo — `log_action` es seguro de llamar ahí, solo escribe a un archivo, nunca toca widgets) |
+| `RUN` | Inicio/fin de una corrida de `swat2012.exe` (`engine/run.py::run_scenario`, exit code y duración) y guardado de `NBYR`/`IYR`/`NYSKIP`/`IPRINT` (`ui/tab_run.py`) |
+| `RESULTS_RCH` / `RESULTS_SUB` / `RESULTS_HRU` | "Organize" de `output.rch`/`.sub`/`.hru` (`ui/tab_results.py`, `ui/tab_sub_results.py`, `ui/tab_hru_results.py`) |
+| `SUMMARY` | Corrida de resumen wetlands/HRU (`ui/tab_summary.py`) |
+| `BATCH` | Inicio/fin del batch de cobertura y resultado de cada paso (`engine/batch_run.py`) |
+| `NBS_BATCH` | Inicio/fin del batch de área NbS y resultado de cada paso (`engine/nbs_area_batch_run.py`) |
+| `NBS` | Crear/editar/borrar una NbS de la biblioteca (`scenarios/nbs.py`) y sincronizar una cobertura nueva a `plant.dat` (`scenarios/nbs_apply.py::sync_new_coverage_to_plant_dat`) |
+| `NBS_APPLY` | Cualquier aplicación de una NbS a HRU reales — logueado una sola vez dentro de `scenarios/nbs_apply.py::apply_nbs`, así que cubre los tres flujos de la pestaña NbS (manual, por área, por área en todas las subcuencas) sin duplicar la llamada en cada uno |
+
+`run_scenario` resuelve el `project_dir` a loguear como
+`txtinout_dir.parent` (misma convención que el resto de la app: una
+carpeta de proyecto/escenario siempre contiene `TxtInOut/` directo) — por
+eso una corrida disparada desde Batch o NbS area batch queda registrada
+en el `activity_log.txt` de esa **copia de escenario**, no en el del
+proyecto de referencia; `engine/batch_run.py` y
+`engine/nbs_area_batch_run.py` sí loguean el inicio/fin del batch completo
+(y cualquier fallo por paso) en el `activity_log.txt` del proyecto de
+referencia, además del log por-paso que cada escenario ya recibe vía
+`run_scenario`.
+
 ## Archivos SWAT y su rol
 
 | Archivo | Rol en la app |

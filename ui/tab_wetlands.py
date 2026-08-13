@@ -27,6 +27,7 @@ from tkinter import Entry, filedialog, ttk
 import customtkinter as ctk
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from scenarios.validation import validate_field_value
 from scenarios.wetland_draft import build_wetland_draft, save_wetland_draft
 from scenarios.wetland_import import parse_wetland_import_csv
@@ -317,6 +318,13 @@ class WetlandsTab(ctk.CTkFrame):
 
         save_wetland_draft(self._project_dir, build_wetland_draft(txtinout_dir))
         self._refresh_table()
+
+        log_action(
+            self._project_dir,
+            "WETLANDS",
+            f"Materialized CSV import: {len(written_subbasins)} subbasin(s) written"
+            + (f", {len(errors)} error(s): {'; '.join(errors)}" if errors else "."),
+        )
 
         if errors:
             self._set_status(self._config.text("wetland.materialize_error").format(error="; ".join(errors)), error=True)

@@ -18,6 +18,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from config.settings import ConfigManager
 from generar_resumen_coberturas import build_land_use_summary
+from scenarios.activity_log import log_action
 from scenarios.project import ProjectMetadata, SummaryEntry, save_project
 from swat_io.cio_parser import CioParseError, parse_file_cio
 from swat_io.hru.summary import (
@@ -370,6 +371,13 @@ class SummaryTab(ctk.CTkFrame):
                 results["hru"] = _hru_stats_to_dict(hru_stats_from_summary(hru_summary_df, simulation_period))
                 results["land_use_df"] = land_use_summary_df
 
+            log_action(
+                project_dir,
+                "SUMMARY",
+                "Ran summary: " + ", ".join(
+                    label for label, enabled in (("wetlands", run_wetlands), ("HRU/land-use", run_hru)) if enabled
+                ) + ".",
+            )
             return results
 
         run_in_background(

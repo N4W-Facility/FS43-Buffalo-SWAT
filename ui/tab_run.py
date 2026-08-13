@@ -47,6 +47,7 @@ from typing import Callable
 import customtkinter as ctk
 
 from config.settings import AppPaths, ConfigManager, validate_swat_executable
+from scenarios.activity_log import log_action
 from engine.run import RunResult, run_scenario
 from swat_io.cio_parser import (
     PRINT_FREQUENCY_DAILY,
@@ -393,6 +394,8 @@ class RunTab(ctk.CTkFrame):
                 text_color=self._colors.get("error"),
             )
             return
+
+        log_action(self._project_dir, "RUN", f"Saved file.cio run settings: {values}")
 
         self._load_run_settings()
         self._exit_period_edit_mode()

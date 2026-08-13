@@ -22,6 +22,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scenarios.activity_log import log_action
 from swat_io.tool_outputs import tool_outputs_dir
 
 HYDROLOGIC_SOIL_GROUPS: tuple[str, ...] = ("A", "B", "C", "D")
@@ -159,13 +160,20 @@ def save_library(project_dir: Path | str, definitions: list[NbSDefinition]) -> P
 def add_or_replace(project_dir: Path | str, definition: NbSDefinition) -> list[NbSDefinition]:
     """Agrega ``definition`` a la biblioteca, o reemplaza la existente con
     el mismo nombre (los nombres de NbS son únicos dentro de un proyecto)."""
-    definitions = [d for d in load_library(project_dir) if d.name != definition.name]
+    existing = load_library(project_dir)
+    was_update = any(d.name == definition.name for d in existing)
+    definitions = [d for d in existing if d.name != definition.name]
     definitions.append(definition)
     save_library(project_dir, definitions)
+    log_action(
+        project_dir, "NBS",
+        f"{'Updated' if was_update else 'Created'} NbS '{definition.name}' (target={definition.target_lulc}).",
+    )
     return definitions
 
 
 def delete_definition(project_dir: Path | str, name: str) -> list[NbSDefinition]:
     definitions = [d for d in load_library(project_dir) if d.name != name]
     save_library(project_dir, definitions)
+    log_action(project_dir, "NBS", f"Deleted NbS '{name}'.")
     return definitions

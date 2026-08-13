@@ -12,6 +12,7 @@ from typing import Callable
 import customtkinter as ctk
 
 from config.settings import ConfigManager
+from scenarios.activity_log import log_action
 from scenarios.project import (
     ProjectMetadata,
     is_valid_project_dir,
@@ -215,6 +216,7 @@ class ProjectTab(ctk.CTkFrame):
         setattr(self._metadata, attr, str(Path(selected)))
         save_project(self._project_dir, self._metadata)
         field.set_value(getattr(self._metadata, attr))
+        log_action(self._project_dir, "PROJECT", f"Set {attr} to '{selected}'.")
         self._on_project_opened(self._project_dir, self._metadata)
 
     def _on_open_clicked(self) -> None:
@@ -236,6 +238,7 @@ class ProjectTab(ctk.CTkFrame):
         if dialog.saved_metadata is not None:
             self._metadata = dialog.saved_metadata
             self._refresh_fields()
+            log_action(self._project_dir, "PROJECT", "Edited project metadata (name/description).")
             self._on_project_opened(self._project_dir, self._metadata)
 
     def _open_project(self, project_dir: Path) -> None:
@@ -244,6 +247,7 @@ class ProjectTab(ctk.CTkFrame):
         self._refresh_fields()
         self._loaded_state.pack(fill="both", expand=True)
         self._empty_state.pack_forget()
+        log_action(project_dir, "PROJECT", f"Opened project at '{project_dir}'.")
         self._on_project_opened(project_dir, self._metadata)
 
     def _refresh_fields(self) -> None:

@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from scenarios.activity_log import log_action
+
 ProgressCallback = Callable[[str], None]
 
 
@@ -51,8 +53,10 @@ def run_scenario(
     mensajes más seguido.
     """
     txtinout_dir = Path(txtinout_dir)
+    project_dir = txtinout_dir.parent
     target_path = txtinout_dir / target_executable_name
     shutil.copy2(swat_executable, target_path)
+    log_action(project_dir, "RUN", f"Started SWAT run with executable '{swat_executable}'.")
 
     if on_progress is not None:
         on_progress(f"Running {target_executable_name}...")
@@ -92,6 +96,12 @@ def run_scenario(
     stdout_thread.join()
     stderr_thread.join()
     elapsed = time.monotonic() - start
+
+    log_action(
+        project_dir,
+        "RUN",
+        f"SWAT run finished: exit_code={process.returncode}, elapsed={elapsed:.1f}s.",
+    )
 
     return RunResult(
         success=process.returncode == 0,

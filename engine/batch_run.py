@@ -45,6 +45,7 @@ from engine.configure import create_working_scenario
 from engine.run import run_scenario
 from generar_resumen_coberturas import generar_resumen_coberturas
 from generar_resumen_humedales import generar_resumen_humedales
+from scenarios.activity_log import log_action
 from scenarios.hru_draft import write_hru_values
 from scenarios.land_cover_config import LandCoverBatchConfig
 from scenarios.land_cover_reallocation import (
@@ -214,6 +215,13 @@ def run_land_cover_batch(
     destination_dir.mkdir(parents=True, exist_ok=True)
     output_options = output_options or OutputOrganizeOptions()
 
+    log_action(
+        reference_project_dir,
+        "BATCH",
+        f"Started land-cover batch to '{destination_dir}': target={config.target_lulc}, "
+        f"series={config.target_pct_series}.",
+    )
+
     def report(message: str) -> None:
         if on_progress is not None:
             on_progress(message)
@@ -278,10 +286,25 @@ def run_land_cover_batch(
                 )
             )
             report(f"{step_label}: done.")
+            modified = sum(1 for r in reallocation_results if r.status == STATUS_APPLIED)
+            log_action(
+                scenario_dir,
+                "BATCH",
+                f"Land-cover batch step {folder_name} completed: {modified}/{len(reallocation_results)} "
+                f"subbasin(s) modified.",
+            )
         except Exception as error:  # noqa: BLE001 - un escenario no debe abortar el batch completo
             results.append(
                 ScenarioRunResult(target_pct=target_pct, scenario_dir=scenario_dir, status="error", error=str(error))
             )
             report(f"{step_label}: error -- {error}")
+            log_action(reference_project_dir, "BATCH", f"Land-cover batch step {folder_name} failed: {error}")
+
+    log_action(
+        reference_project_dir,
+        "BATCH",
+        f"Finished land-cover batch to '{destination_dir}': "
+        f"{sum(1 for r in results if r.status == 'ok')}/{len(results)} step(s) succeeded.",
+    )
 
     return results
