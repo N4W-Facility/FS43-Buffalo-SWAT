@@ -465,6 +465,25 @@ class BatchTab(ctk.CTkFrame):
         self._set_nbs_batch_log("")
         self._update_nbs_batch_run_button_state()
 
+    def refresh_nbs_library(self) -> None:
+        """Repuebla el selector de NbS de esta pestaña sin tocar el resto del
+        estado del batch -- llamado desde NbSTab cuando la biblioteca cambia
+        (crear/editar/borrar), ya que ese selector solo se poblaba una vez en
+        set_project y quedaba desactualizado."""
+        if self._project_dir is None:
+            return
+        current = self._nbs_batch_selector.get()
+        self._nbs_library = load_library(self._project_dir)
+        names = [d.name for d in self._nbs_library]
+        self._nbs_batch_selector.configure(values=names)
+        if current in names:
+            self._nbs_batch_selector.set(current)
+        elif names:
+            self._nbs_batch_selector.current(0)
+        else:
+            self._nbs_batch_selector.set("")
+        self._update_nbs_batch_run_button_state()
+
     # -- destino -----------------------------------------------------------
 
     def _on_browse_destination_clicked(self) -> None:

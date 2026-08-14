@@ -15,6 +15,7 @@ from .tab_hru import HRUsTab
 from .tab_hru_results import HruResultsTab
 from .tab_nbs import NbSTab
 from .tab_project import ProjectTab
+from .tab_restoration_inputs import RestorationInputsTab
 from .tab_results import ResultsTab
 from .tab_run import RunTab
 from .tab_sub_results import SubResultsTab
@@ -47,7 +48,6 @@ class App(ctk.CTk):
         )
         self._wetlands_tab = WetlandsTab(self._tab_bar, config)
         self._hru_tab = HRUsTab(self._tab_bar, config, on_run_state_changed=self._on_hru_run_state_changed)
-        self._nbs_tab = NbSTab(self._tab_bar, config, on_run_state_changed=self._on_nbs_tab_run_state_changed)
         self._run_tab = RunTab(self._tab_bar, config, on_run_state_changed=self._on_run_tab_run_state_changed)
         self._results_tab = ResultsTab(
             self._tab_bar, config, on_run_state_changed=self._on_results_tab_run_state_changed
@@ -59,6 +59,14 @@ class App(ctk.CTk):
             self._tab_bar, config, on_run_state_changed=self._on_hru_results_tab_run_state_changed
         )
         self._batch_tab = BatchTab(self._tab_bar, config, on_run_state_changed=self._on_batch_tab_run_state_changed)
+        self._nbs_tab = NbSTab(
+            self._tab_bar, config,
+            on_run_state_changed=self._on_nbs_tab_run_state_changed,
+            on_library_changed=self._batch_tab.refresh_nbs_library,
+        )
+        self._restoration_inputs_tab = RestorationInputsTab(
+            self._tab_bar, config, on_run_state_changed=self._on_restoration_inputs_tab_run_state_changed
+        )
 
         # Orden de pestañas = orden de flujo de trabajo (2026-08-13, pedido
         # explícito del usuario): configurar el escenario (Wetlands/HRUs/NbS)
@@ -70,6 +78,9 @@ class App(ctk.CTk):
         self._tab_bar.add_tab("wetlands", "tab.wetlands", self._wetlands_tab, enabled=False)
         self._tab_bar.add_tab("hru", "tab.hru", self._hru_tab, enabled=False)
         self._tab_bar.add_tab("nbs", "tab.nbs", self._nbs_tab, enabled=False)
+        self._tab_bar.add_tab(
+            "restoration_inputs", "tab.restoration_inputs", self._restoration_inputs_tab, enabled=False
+        )
         self._tab_bar.add_tab("run", "tab.run", self._run_tab, enabled=False)
         self._tab_bar.add_tab("results", "tab.results", self._results_tab, enabled=False)
         self._tab_bar.add_tab("sub_results", "tab.sub_results", self._sub_results_tab, enabled=False)
@@ -95,6 +106,8 @@ class App(ctk.CTk):
         self._batch_tab.set_project(project_dir)
         self._tab_bar.set_enabled("nbs", True)
         self._nbs_tab.set_project(project_dir)
+        self._tab_bar.set_enabled("restoration_inputs", True)
+        self._restoration_inputs_tab.set_project(project_dir, metadata)
 
     def _on_summary_run_state_changed(self, running: bool) -> None:
         """Mientras Summary corre un Run, bloquea toda navegación (pestañas y
@@ -159,5 +172,13 @@ class App(ctk.CTk):
         más de 1GB en salida Daily): cambiar de proyecto a mitad de esa
         lectura dejaría el hilo de fondo operando sobre un project_dir que
         la UI ya no considera activo."""
+        self._tab_bar.set_navigation_locked(running)
+        self._project_tab.set_locked(running)
+
+    def _on_restoration_inputs_tab_run_state_changed(self, running: bool) -> None:
+        """Mismo bloqueo que las demás operaciones de fondo, mientras
+        RestorationInputsTab escanea o cruza los rasters de entrada: aunque
+        el rectángulo de trabajo real es chico, sigue siendo E/S sobre un
+        archivo potencialmente enorme en una unidad de red."""
         self._tab_bar.set_navigation_locked(running)
         self._project_tab.set_locked(running)

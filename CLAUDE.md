@@ -50,8 +50,9 @@ vez de CSV — ver esa pestaña más abajo.
   pestañas deshabilitadas hasta que haya un proyecto abierto. La barra en
   sí es una `CTkScrollableFrame` horizontal (no un `CTkFrame` con
   `pack(side="left")` plano): desde seis pestañas el ancho requerido por
-  los botones ya no entra en una ventana de pantalla chica (ahora diez,
-  con Results (.sub), HRU Results, Batch Scenarios y NbS), y sin scroll las
+  los botones ya no entra en una ventana de pantalla chica (ahora once,
+  con Results (.sub), HRU Results, Batch Scenarios, NbS y Restoration
+  Inputs), y sin scroll las
   últimas pestañas quedaban fuera del área visible sin forma de
   alcanzarlas (bug real, detectado 2026-08-03 al agregar la pestaña
   Results — ver más abajo). `_WINDOW_SIZE` en `ui/app.py` sigue en
@@ -1058,6 +1059,141 @@ vez de CSV — ver esa pestaña más abajo.
   nuevo. Una sola barra alcanza para las tres operaciones porque ya se
   deshabilitan mutuamente (nunca corren dos a la vez).
 
+- **Pestaña Restoration Inputs** (`ui/tab_restoration_inputs.py` +
+  `scenarios/nbs_raster_inputs.py` + `raster_io/`, 2026-08-14, pedido
+  explícito del usuario): prepara el CSV matriz `subbasin, area_ha,
+  <coberturas>` que ya consumen "Apply an NbS by area (all subbasins)"
+  (pestaña NbS) y NbS area batch (pestaña Batch Scenarios) — pero
+  calculado a partir de dos rasters reales en vez de escrito a mano: uno
+  de cobertura actual (puede ser gigante, ej. Cropland Data Layer de un
+  país entero, ~15 GB) y uno de restauración/NbS (categórico, extensión
+  acotada a la cuenca, con clases tipo "potential wetland area only").
+  Cruza ambos contra el shapefile de subcuencas ya configurado en Project
+  (`subbasin_shp_path`) y calcula, por subcuenca y por clase de
+  restauración, qué % del área corresponde hoy a cada cobertura real del
+  proyecto.
+
+  **Nueva dependencia: `rasterio`** (ya estaba instalada en el env `swat`,
+  no hubo que agregarla) — a diferencia del resto de la app, que
+  deliberadamente evita GDAL/Fiona/geopandas para dibujar shapefiles
+  estáticos (`viz/shapefile_reader.py`, ver más abajo), procesar rasters
+  de verdad (reproyección, remuestreo, lectura por ventanas) no se puede
+  resolver con `pyshp`. `rasterio` es la única pieza nueva; el shapefile
+  de subcuencas se sigue leyendo con `pyshp`
+  (`viz.shapefile_reader.read_subbasin_shapes`, reutilizado tal cual vía
+  `raster_io/subbasin_zones.py`).
+
+  **Sistema de coordenadas de referencia: el del shapefile de subcuencas,
+  siempre** (decisión explícita del usuario, revisada en la propia
+  conversación de diseño: en un primer momento pensó que debía primar el
+  raster de cobertura, pero se corrigió a sí mismo porque el shapefile es
+  el que efectivamente usa el modelo SWAT ya calibrado) — `raster_io/prj.py`
+  lo lee del `.prj` real junto al `.shp` (`pyshp` no interpreta
+  proyecciones). Los dos rasters de entrada casi seguro están en CRS
+  distintos entre sí y del shapefile (confirmado contra los rasters reales
+  del proyecto: shapefile en NAD83 UTM 17N, raster de cobertura en Albers
+  CONUS EPSG:5070, raster de restauración en UTM 18N EPSG:32618 — tres
+  sistemas distintos), así que `raster_io/grid.py` reproyecta los bounds
+  de ambos al CRS del shapefile antes de intersectarlos.
+
+  **Resolución destino: la más fina de los dos rasters** (pedido explícito
+  del usuario: "debe primar el pequeño para poder hacer la estadística de
+  manera correcta"), calculada reproyectando el tamaño de píxel nativo de
+  cada raster al CRS destino (`rasterio.warp.calculate_default_transform`)
+  y tomando el mínimo — nunca se asume que ambos rasters comparten unidad
+  de medida sin reproyectar primero.
+
+  **Optimalidad no negociable (pedido explícito del usuario): nunca cargar
+  un raster completo en memoria ni escribir un raster intermedio a disco.**
+  El rectángulo de trabajo se acota primero a la intersección shapefile ∩
+  raster de cobertura ∩ raster de restauración — nunca al raster de
+  cobertura completo, por más que cubra un país entero — y recién ahí se
+  procesa en bloques (`raster_io/crosstab.py`, `block_size` configurable,
+  1024 px por defecto) vía `rasterio.vrt.WarpedVRT`: reproyecta y
+  remuestrea (nearest-neighbor, obligatorio para rasters categóricos) al
+  vuelo, ventana por ventana, así que cada bloque dispara una lectura
+  acotada del raster fuente y GDAL nunca construye una versión reproyectada
+  completa. Un bloque totalmente fuera de toda subcuenca (frecuente en los
+  bordes del rectángulo de trabajo, que es un bounding box, no la forma
+  real de la cuenca) se salta sin tocar los rasters de entrada para ese
+  bloque. Verificado de punta a punta contra los rasters reales del
+  proyecto (CDL de ~15 GB sin recortar, cubriendo todo el continente): el
+  cruce completo tardó **menos de 2 segundos**, confirmando que nunca se
+  toca el archivo completo. La tabla de conteos resultante
+  (`(subcuenca, clase, código) -> píxeles`) es chica (cientos de
+  combinaciones, nunca del tamaño del raster) y se acumula en memoria sin
+  problema mientras se recorren los bloques.
+
+  **Flujo de la pestaña, en dos pasos separados:**
+  1. **Scan** (`scenarios.nbs_raster_inputs.scan_restoration_inputs`):
+     lectura rápida y aproximada (raster decimado vía `out_shape` reducido
+     en `WarpedVRT.read`, no resolución completa) para descubrir qué
+     clases de restauración y qué códigos de cobertura existen realmente
+     en el área de trabajo, y así poblar la UI antes de correr nada pesado.
+     Los nombres de clase de restauración se leen, si existen, de la
+     Raster Attribute Table (RAT) que GDAL persiste en un sidecar
+     `<raster>.aux.xml` (formato PAM) — `raster_io/rat.py`, confirmado
+     contra el `.aux.xml` real del proyecto (clases "potential wetland area
+     only" / "potential riparian area only" / "potential wetland and
+     riparian area"). Bug real encontrado y corregido al probar contra ese
+     archivo: el nombre del tipo de campo ("String") vive en el atributo
+     `typeAsString` de `<Type>`, no en su texto (que es un código numérico
+     de enum de GDAL) — con eso mal leído, `read_pam_rat_names` nunca
+     encontraba el campo de nombre y devolvía `None` siempre, sin error
+     visible (test de regresión en `tests/raster_io/test_rat.py`, con el
+     `.aux.xml` real reproducido byte a byte). El raster de cobertura
+     (Cropland Data Layer) no expone nombres por esta vía -- sus códigos
+     numéricos se muestran tal cual, sin nombre.
+  2. **Cruce CDL→CPNM editable en la UI** (pedido explícito del usuario,
+     evaluado contra dos alternativas -- traer una tabla de cruce ya armada
+     por el usuario, o dejar los códigos crudos en la salida -- y
+     descartadas): por cada código de cobertura encontrado en el Scan, un
+     selector con las coberturas CPNM reales del proyecto abierto
+     (`scenarios.nbs_raster_inputs.discover_project_coverages`, reutiliza
+     `scenarios.land_cover_config.discover_land_cover_options` tal cual) o
+     "(skip)" para excluirlo -- nunca se adivina un mapeo. Un código sin
+     mapear se excluye del área calculada de esa subcuenca/clase (nunca se
+     inventa una cobertura); cuánta área quedó afuera por eso se documenta
+     en el log de Compute, no en el CSV (mismo criterio de "informar sin
+     bloquear" que el resto de la app -- ver deficit reporting en NbS
+     area batch más abajo).
+
+  **Compute** (`scenarios.nbs_raster_inputs.compute_restoration_area_csvs`)
+  corre el cruce a resolución completa (no el muestreo del Scan) en hilo de
+  fondo y escribe **un CSV por clase de restauración no-background** en
+  `tool_outputs/restoration_inputs/` (nombrado desde el nombre real de la
+  clase si el RAT lo trae, o `class_<valor>` si no) -- pedido explícito del
+  usuario ("un CSV de salida por clase"), para poder cargar cada uno contra
+  la NbS que corresponda sin tener que separarlos a mano después. Cada fila
+  es `subbasin, area_ha, <CPNM...>`: `area_ha` es el área de esa
+  subcuenca/clase que sí tiene cobertura mapeada (el área con cobertura sin
+  mapear se excluye del total, no se fuerza a inventar un valor), y cada
+  columna de cobertura es su % de esa área -- por construcción suman ~100,
+  así que el archivo es válido de entrada tal cual para
+  `scenarios.nbs_mass_apply.parse_mass_allocation_csv` (verificado con un
+  round-trip real: se escribe con `compute_restoration_area_csvs` y se
+  vuelve a leer con `parse_mass_allocation_csv`, cero errores, contra datos
+  reales y contra la fixture sintética de test). Dos códigos de cobertura
+  distintos mapeados a la misma CPNM (ej. "Deciduous Forest" y "Mixed
+  Forest" ambos a `FRSD`) se suman bajo esa única columna, no se
+  duplican.
+
+  Ni Scan ni Compute tocan `TxtInOut` -- Compute solo escribe CSV nuevos en
+  `tool_outputs/`, igual que "Organize .rch/.sub/.hru output" -- así que
+  ninguno de los dos pide confirmación, y ambos corren en hilo de fondo
+  (`ui.tasks.run_in_background`) por el mismo criterio general de
+  "operación sobre un modelo real" aunque el rectángulo de trabajo real sea
+  chico: sigue siendo E/S sobre un archivo potencialmente enorme en una
+  unidad de red. Deshabilitada hasta que haya un proyecto abierto; si el
+  shapefile de subcuencas todavía no está configurado en Project, muestra
+  un aviso en vez de dejar que Scan falle con un error críptico.
+
+  Las rutas a los dos rasters de entrada se persisten en `project.json`
+  (`ProjectMetadata.land_cover_raster_path` / `.restoration_raster_path`,
+  nuevos campos, mismo criterio que `subbasin_shp_path`/`reach_shp_path`)
+  aunque se editan en esta pestaña, no en Project -- son configuración
+  por proyecto/cuenca, no por máquina.
+
 **Aviso importante — deuda técnica aceptada explícitamente:** la
 restricción "Aislamiento por escenario" de la sección siguiente **no está
 enforced por código todavía**. Las pestañas Wetlands y HRUs escriben sobre
@@ -1242,6 +1378,11 @@ falta validar contra un `.hru` real de rev. 670): `docs/hru_module.md`.
     consume las capas anteriores.
   - `viz/` o `charts/`: generación de gráficas comparativas (línea base vs.
     escenario).
+  - `raster_io/`: lectura/reproyección/cruce de rasters externos (cobertura,
+    restauración) contra el shapefile de subcuencas -- ver pestaña
+    Restoration Inputs. Sin dependencias de UI. Único módulo del proyecto
+    que usa `rasterio`/GDAL; el resto de la app sigue evitándolo a
+    propósito (ver "Estado actual de la implementación").
 - Los parámetros de humedal y sus rangos válidos deben modelarse
   explícitamente (no como diccionarios sueltos de strings), de forma que la
   UI pueda validar entradas antes de escribir el `.pnd`.

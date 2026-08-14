@@ -37,6 +37,12 @@ class ProjectMetadata:
     hru: SummaryEntry | None = None
     reach_shp_path: str | None = None
     subbasin_shp_path: str | None = None
+    # Rasters de entrada de la pestaña Restoration Inputs (2026-08-14,
+    # pedido explícito del usuario) -- por proyecto/cuenca, igual criterio
+    # que los shapefiles de arriba: se editan en esa pestaña, no en esta,
+    # pero persisten acá junto con el resto de la metadata del proyecto.
+    land_cover_raster_path: str | None = None
+    restoration_raster_path: str | None = None
 
 
 def is_valid_project_dir(path: Path | str) -> bool:
@@ -54,6 +60,18 @@ def validate_shapefile_path(path: Path | str) -> str | None:
     candidate = Path(path)
     if candidate.suffix.lower() != ".shp" or not candidate.is_file():
         return "project.error.invalid_shp"
+    return None
+
+
+def validate_raster_path(path: Path | str) -> str | None:
+    """Devuelve una clave de error de en.json si path no apunta a un
+    GeoTIFF existente, o None si es válido -- mismo criterio que
+    validate_shapefile_path: solo existencia + extensión, nunca abre el
+    raster acá (eso es responsabilidad de raster_io al momento de
+    calcular)."""
+    candidate = Path(path)
+    if candidate.suffix.lower() not in (".tif", ".tiff") or not candidate.is_file():
+        return "project.error.invalid_raster"
     return None
 
 
@@ -98,6 +116,8 @@ def _metadata_to_dict(metadata: ProjectMetadata) -> dict:
         "description": metadata.description,
         "reach_shp_path": metadata.reach_shp_path,
         "subbasin_shp_path": metadata.subbasin_shp_path,
+        "land_cover_raster_path": metadata.land_cover_raster_path,
+        "restoration_raster_path": metadata.restoration_raster_path,
         "summary": summary,
     }
 
@@ -112,6 +132,8 @@ def _metadata_from_dict(data: object) -> ProjectMetadata:
         description=data.get("description") or "",
         reach_shp_path=data.get("reach_shp_path") or None,
         subbasin_shp_path=data.get("subbasin_shp_path") or None,
+        land_cover_raster_path=data.get("land_cover_raster_path") or None,
+        restoration_raster_path=data.get("restoration_raster_path") or None,
         wetlands=_summary_entry_from_dict(summary.get("wetlands")),
         hru=_summary_entry_from_dict(summary.get("hru")),
     )
