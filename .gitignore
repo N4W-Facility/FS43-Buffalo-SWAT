@@ -3,3 +3,9 @@ __pycache__/
 .superpowers/
 .Rhistory
 .idea/
+
+# PyInstaller build output (see swat_app.spec) -- distributed via GitHub
+# Releases instead, not tracked in git (dist/ alone is 200MB+).
+build/
+dist/
+

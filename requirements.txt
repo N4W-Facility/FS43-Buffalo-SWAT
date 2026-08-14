@@ -1,0 +1,19 @@
+# Runtime dependencies to run the app (main.py) or rebuild it with
+# PyInstaller (see swat_app.spec).
+#
+# Tested with Python 3.14.6 on the conda env "swat"
+# (C:\Users\Server\.conda\envs\swat). rasterio in particular ships its own
+# vendored GDAL build (rasterio.libs) tied to this exact version -- do not
+# bump it without re-testing the PyInstaller build end to end.
+
+customtkinter==6.0.0
+matplotlib==3.11.1
+pandas==3.0.3
+pyshp==3.1.6
+rasterio==1.5.0
+
+# Pinned explicitly even though they're transitive (customtkinter/Pillow,
+# pandas & rasterio/numpy) -- the vendored native wheels for this stack
+# are what avoids the DLL mismatches this project has hit before.
+pillow==12.3.0
+numpy==2.4.6
