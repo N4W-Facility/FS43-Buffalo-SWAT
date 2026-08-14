@@ -43,8 +43,6 @@ from swat_io.tool_outputs import tool_outputs_dir
 from .tasks import run_in_background
 from .widgets import ReadOnlyField, bind_responsive_wraplength, palette, style_combobox
 
-_SKIP_VALUE = ""
-
 
 class RestorationInputsTab(ctk.CTkFrame):
     def __init__(
@@ -382,9 +380,15 @@ class RestorationInputsTab(ctk.CTkFrame):
         self._crosswalk_selectors = {}
 
         style = style_combobox(self._config)
-        values = [_SKIP_VALUE, *coverages]
+        auto_label = self._config.text("restoration_inputs_tab.crosswalk_auto_option")
         skip_label = self._config.text("restoration_inputs_tab.crosswalk_skip_option")
-        display_values = [skip_label, *coverages]
+        # "(use code)" primero y seleccionado por default -- pedido
+        # explícito del usuario, 2026-08-14: completar este cruce nunca
+        # debe ser un requisito para tener resultados (ver
+        # scenarios.nbs_raster_inputs.CoverageCrosswalk). "(skip)" queda
+        # disponible para cuando el usuario sí quiere excluir un código a
+        # propósito, no como default.
+        display_values = [auto_label, skip_label, *coverages]
 
         for row_index, land_cover_code in enumerate(land_cover_codes):
             label = ctk.CTkLabel(
@@ -397,17 +401,23 @@ class RestorationInputsTab(ctk.CTkFrame):
             label.grid(row=row_index, column=0, sticky="w", padx=(4, 8), pady=2)
 
             selector = ttk.Combobox(self._crosswalk_container, style=style, state="readonly", values=display_values, width=30)
-            selector.set(skip_label)
+            selector.set(auto_label)
             selector.grid(row=row_index, column=1, sticky="w", pady=2)
             self._crosswalk_selectors[land_cover_code.code] = selector
 
-    def _current_crosswalk(self) -> dict[int, str]:
+    def _current_crosswalk(self) -> dict[int, str | None]:
+        auto_label = self._config.text("restoration_inputs_tab.crosswalk_auto_option")
         skip_label = self._config.text("restoration_inputs_tab.crosswalk_skip_option")
-        crosswalk: dict[int, str] = {}
+        crosswalk: dict[int, str | None] = {}
         for code, selector in self._crosswalk_selectors.items():
             value = selector.get()
-            if value and value != skip_label:
+            if value == skip_label:
+                crosswalk[code] = None
+            elif value and value != auto_label:
                 crosswalk[code] = value
+            # auto_label (o vacío): se deja fuera del dict a propósito --
+            # scenarios.nbs_raster_inputs ya trata un código ausente como
+            # "usar su propio número", así que no hace falta poblarlo acá.
         return crosswalk
 
     # -- Compute ------------------------------------------------------------
@@ -416,12 +426,6 @@ class RestorationInputsTab(ctk.CTkFrame):
         if self._project_dir is None or self._scan_result is None:
             return
         crosswalk = self._current_crosswalk()
-        if not crosswalk:
-            self._compute_status_label.configure(
-                text=self._config.text("restoration_inputs_tab.compute_missing_crosswalk"),
-                text_color=self._colors.get("error"),
-            )
-            return
 
         project_dir = self._project_dir
         shp_path = self._metadata.subbasin_shp_path
@@ -461,6 +465,12 @@ class RestorationInputsTab(ctk.CTkFrame):
                     subbasins=output.subbasin_count, path=output.csv_path,
                 )
             )
+            if output.auto_labeled_codes:
+                lines.append(
+                    self._config.text("restoration_inputs_tab.compute_log_auto_line").format(
+                        codes=", ".join(str(code) for code in sorted(output.auto_labeled_codes))
+                    )
+                )
             for subbasin, excluded_ha in sorted(output.excluded_ha_by_subbasin.items()):
                 lines.append(
                     self._config.text("restoration_inputs_tab.compute_log_excluded_line").format(

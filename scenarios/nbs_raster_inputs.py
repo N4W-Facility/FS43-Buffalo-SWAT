@@ -41,9 +41,15 @@ _PCT_DECIMALS = 4
 _AREA_DECIMALS = 3
 
 # CoverageCrosswalk: código de cobertura del raster (ej. NASS CDL) -> CPNM
-# real del proyecto. Un código ausente del dict se trata como "sin
-# mapear" (excluido del área calculada, nunca inventado).
-CoverageCrosswalk = dict[int, str]
+# real del proyecto, o None para excluirlo a propósito. Pedido explícito
+# del usuario, 2026-08-14 (revisado tras la v1, que excluía todo código sin
+# mapear y no calculaba nada si el usuario no llegaba a mapear ninguno):
+# el cruce nunca debe depender de que el usuario complete esta tabla antes
+# de poder ver números. Un código AUSENTE del dict (nunca tocado en la UI)
+# usa su propio código como nombre de columna (ver
+# _label_for_land_cover_code) -- solo un código con valor explícito
+# ``None`` (el usuario eligió "(skip)") se excluye de verdad.
+CoverageCrosswalk = dict[int, str | None]
 
 
 class RestorationInputsError(ValueError):
@@ -124,8 +130,12 @@ class RestorationClassOutput:
     restoration_name: str | None
     csv_path: Path
     subbasin_count: int
-    # subcuenca -> hectáreas excluidas por no tener cobertura mapeada en el crosswalk
+    # subcuenca -> hectáreas excluidas a propósito (código mapeado a "(skip)")
     excluded_ha_by_subbasin: dict[int, float] = field(default_factory=dict)
+    # códigos que aparecen en el CSV con su propio número como columna,
+    # porque el usuario nunca les asignó una cobertura real -- no están
+    # excluidos, solo sin traducir a CPNM (ver CoverageCrosswalk).
+    auto_labeled_codes: frozenset[int] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -147,11 +157,14 @@ def compute_restoration_area_csvs(
     ``scan_restoration_inputs``) y escribe un CSV por clase de
     restauración no-background en ``tool_outputs/restoration_inputs/``.
 
-    Un código de cobertura sin entrada en ``crosswalk`` se excluye del
-    área calculada de esa subcuenca (nunca se inventa una cobertura) --
-    ``RestorationClassOutput.excluded_ha_by_subbasin`` documenta cuánta
-    área quedó afuera por eso, para que la UI lo muestre en el log en vez
-    de fallar en silencio."""
+    ``crosswalk`` es opcional en la práctica: un código de cobertura
+    ausente del dict se calcula igual, usando su propio código numérico
+    como nombre de columna (``RestorationClassOutput.auto_labeled_codes``
+    documenta cuáles) -- solo un código mapeado explícitamente a ``None``
+    ("(skip)" en la UI) se excluye de verdad, y esa área sí queda afuera
+    (``excluded_ha_by_subbasin``). Nunca hace falta completar el cruce
+    para obtener resultados; completar el cruce después solo cambia el
+    nombre de columna de "141" a "FRSD", no si esa área se computa."""
     land_cover_raster_path = Path(land_cover_raster_path)
     restoration_raster_path = Path(restoration_raster_path)
 
@@ -162,21 +175,28 @@ def compute_restoration_area_csvs(
     )
     restoration_names = read_pam_rat_names(restoration_raster_path) or {}
 
-    # (restoration_class, subbasin) -> {cpnm: ha}
+    # (restoration_class, subbasin) -> {etiqueta: ha} -- la etiqueta es el
+    # CPNM real si se mapeó, o el código crudo (str) si no.
     mapped_ha: dict[tuple[int, int], dict[str, float]] = defaultdict(dict)
-    # (restoration_class, subbasin) -> ha sin cobertura mapeada
+    # (restoration_class, subbasin) -> ha excluida a propósito ("(skip)")
     excluded_ha: dict[tuple[int, int], float] = defaultdict(float)
+    # clase de restauración -> códigos que usaron su propio número como etiqueta
+    auto_labeled_by_class: dict[int, set[int]] = defaultdict(set)
 
     for (subbasin, restoration_class, land_cover_code), pixel_count in crosstab.counts.items():
         if restoration_class == _BACKGROUND_RESTORATION_CLASS:
             continue
         ha = pixel_count * crosstab.pixel_area_ha
-        cpnm = crosswalk.get(land_cover_code)
         key = (restoration_class, subbasin)
-        if cpnm is None:
-            excluded_ha[key] += ha
+        if land_cover_code in crosswalk:
+            label = crosswalk[land_cover_code]
+            if label is None:
+                excluded_ha[key] += ha
+                continue
         else:
-            mapped_ha[key][cpnm] = mapped_ha[key].get(cpnm, 0.0) + ha
+            label = str(land_cover_code)
+            auto_labeled_by_class[restoration_class].add(land_cover_code)
+        mapped_ha[key][label] = mapped_ha[key].get(label, 0.0) + ha
 
     restoration_values = sorted({cls for cls, _sub in mapped_ha} | {cls for cls, _sub in excluded_ha})
     output_dir = tool_outputs_dir(project_dir) / _OUTPUT_SUBDIR
@@ -214,6 +234,7 @@ def compute_restoration_area_csvs(
                 csv_path=csv_path,
                 subbasin_count=len(subbasins_for_class),
                 excluded_ha_by_subbasin=subbasin_excluded,
+                auto_labeled_codes=frozenset(auto_labeled_by_class.get(restoration_value, set())),
             )
         )
 

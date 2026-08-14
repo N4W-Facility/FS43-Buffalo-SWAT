@@ -167,3 +167,34 @@ def test_compute_writes_csv_and_enables_open_folder(hidden_root, config, project
     df = pd.read_csv(csv_files[0])
     assert list(df.columns) == ["subbasin", "area_ha", "AGRL"]
     assert set(df["subbasin"]) == {1}  # subcuenca 2 quedó sin mapear (skip) -> excluida
+
+
+def test_compute_without_touching_crosswalk_still_writes_stats(hidden_root, config, project: Path, monkeypatch) -> None:
+    """Pedido explícito del usuario, 2026-08-14: Compute nunca debe
+    depender de completar la tabla de cruce -- clickear Scan y después
+    Compute, sin tocar ningún selector, debe seguir dando estadísticas
+    reales (con los códigos crudos como columna) en vez de un CSV vacío."""
+    _install_synchronous_run_in_background(monkeypatch)
+
+    tab = RestorationInputsTab(hidden_root, config, on_run_state_changed=lambda _running: None)
+    metadata = ProjectMetadata(
+        subbasin_shp_path=str(project / "subs.shp"),
+        land_cover_raster_path=str(project / "land_cover.tif"),
+        restoration_raster_path=str(project / "restoration.tif"),
+    )
+    tab.set_project(project, metadata)
+    tab._on_scan_clicked()
+
+    auto_label = config.text("restoration_inputs_tab.crosswalk_auto_option")
+    assert all(selector.get() == auto_label for selector in tab._crosswalk_selectors.values())
+
+    tab._on_compute_clicked()
+
+    assert tab._open_folder_button.cget("state") == "normal"
+    import pandas as pd
+
+    csv_files = list((project / "tool_outputs" / "restoration_inputs").glob("*.csv"))
+    assert len(csv_files) == 1
+    df = pd.read_csv(csv_files[0])
+    assert list(df.columns) == ["subbasin", "area_ha", "1", "2"]
+    assert set(df["subbasin"]) == {1, 2}

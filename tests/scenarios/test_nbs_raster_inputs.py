@@ -94,7 +94,11 @@ def test_discover_project_coverages_reads_real_hru_files(tmp_path: Path) -> None
 
 def test_compute_writes_csv_that_parse_mass_allocation_csv_accepts(tmp_path: Path) -> None:
     project_dir, shp_path, land_cover_path, restoration_path = _build_project(tmp_path)
-    crosswalk = {1: "FRSD", 2: "PAST"}  # código 99 queda sin mapear a propósito
+    # Código 99 queda ausente del crosswalk a propósito -- debe seguir
+    # contando en el área calculada, con su propio número como columna
+    # (pedido explícito del usuario: el cruce nunca depende de completar
+    # esta tabla).
+    crosswalk = {1: "FRSD", 2: "PAST"}
 
     result = compute_restoration_area_csvs(project_dir, shp_path, land_cover_path, restoration_path, crosswalk)
 
@@ -102,6 +106,7 @@ def test_compute_writes_csv_that_parse_mass_allocation_csv_accepts(tmp_path: Pat
     output = result.outputs[0]
     assert output.restoration_value == 1
     assert output.csv_path.exists()
+    assert output.auto_labeled_codes == frozenset({99})
 
     allocations, errors = parse_mass_allocation_csv(output.csv_path)
     assert errors == []
@@ -111,17 +116,43 @@ def test_compute_writes_csv_that_parse_mass_allocation_csv_accepts(tmp_path: Pat
     assert allocations[1].sources == [("FRSD", 100.0)]
 
     # Subcuenca 2: 50 px código 2 (PAST, mapeado) + 50 px código 99 (sin
-    # mapear, excluido) -> area_ha solo cuenta lo mapeado.
-    assert allocations[2].area_ha == 0.5
-    assert allocations[2].sources == [("PAST", 100.0)]
-    assert output.excluded_ha_by_subbasin[2] == 0.5
-    assert 1 not in output.excluded_ha_by_subbasin  # nada excluido en subcuenca 1
+    # mapear -> columna "99") -> area_ha cuenta las dos, nada excluido.
+    assert allocations[2].area_ha == 1.0
+    assert allocations[2].sources == [("99", 50.0), ("PAST", 50.0)]
+    assert output.excluded_ha_by_subbasin == {}
 
 
-def test_compute_with_no_mapped_codes_writes_no_rows(tmp_path: Path) -> None:
+def test_compute_with_empty_crosswalk_still_computes_using_raw_codes(tmp_path: Path) -> None:
     project_dir, shp_path, land_cover_path, restoration_path = _build_project(tmp_path)
 
-    result = compute_restoration_area_csvs(project_dir, shp_path, land_cover_path, restoration_path, {123: "FRSD"})
+    result = compute_restoration_area_csvs(project_dir, shp_path, land_cover_path, restoration_path, {})
 
     assert len(result.outputs) == 1
-    assert result.outputs[0].subbasin_count == 0
+    output = result.outputs[0]
+    assert output.subbasin_count == 2
+    assert output.auto_labeled_codes == frozenset({1, 2, 99})
+
+    allocations, errors = parse_mass_allocation_csv(output.csv_path)
+    assert errors == []
+    assert allocations[1].area_ha == 0.8
+    assert allocations[1].sources == [("1", 100.0)]
+    assert allocations[2].area_ha == 1.0
+    assert allocations[2].sources == [("2", 50.0), ("99", 50.0)]
+
+
+def test_compute_with_explicit_skip_excludes_that_code(tmp_path: Path) -> None:
+    project_dir, shp_path, land_cover_path, restoration_path = _build_project(tmp_path)
+
+    result = compute_restoration_area_csvs(
+        project_dir, shp_path, land_cover_path, restoration_path, {1: "FRSD", 99: None}
+    )
+
+    output = result.outputs[0]
+    allocations, errors = parse_mass_allocation_csv(output.csv_path)
+    assert errors == []
+
+    # Subcuenca 2: código 2 sin mapear (auto, columna "2") + código 99
+    # explícitamente "(skip)" -> excluido de area_ha.
+    assert allocations[2].area_ha == 0.5
+    assert allocations[2].sources == [("2", 100.0)]
+    assert output.excluded_ha_by_subbasin[2] == 0.5
