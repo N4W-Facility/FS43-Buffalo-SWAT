@@ -72,7 +72,19 @@ Every Apply streams a line per HRU into a live log as it runs, and automatically
 
 ![NbS Apply results window, with a real error row highlighted](docs/screenshots/06_nbs_apply_summary.png)
 
-### 6. Run
+### 6. Restoration Inputs
+
+Where you turn two rasters into the area/coverage CSV that "Apply an NbS by area (all subbasins)" and the NbS area batch expect, instead of typing it by hand: a land-cover raster (can be arbitrarily large — verified against a real ~15 GB, uncropped-to-continent Cropland Data Layer) and a categorical restoration/NbS raster (e.g. classes like "potential wetland area only"). Both get reprojected on the fly to the subbasin shapefile's coordinate system — always the authoritative one, since that's what the SWAT model is actually built on — at whichever of the two rasters has the finer pixel size. The work is bounded to the intersection of the subbasins and the restoration raster's own extent before anything is read, and processed in blocks through a `WarpedVRT`, so the giant land-cover raster is never loaded whole or written back out reprojected: the real-data run above completed in under 2 seconds.
+
+**Scan** reads a fast, decimated sample of both rasters to find which restoration classes and land-cover codes actually exist in the project's area — including real class names when the restoration raster carries a GDAL Raster Attribute Table (`.aux.xml`) sidecar. **Compute** then runs the same cross-tabulation at full resolution and writes one CSV per restoration class to `tool_outputs/restoration_inputs/`, each row giving a subbasin's total restoration area (ha) and the % of it under each land-cover code.
+
+The land-cover crosswalk (mapping a raw code like `141` to a real project coverage like `FRSD`) is entirely optional — Compute never waits on it. An unmapped code is still computed, just under its own raw number as the column name instead of a coverage name; only an explicit "(skip)" choice excludes a code's area on purpose. Mapping codes only matters when you want the output to load directly into "Apply an NbS by area", which needs real coverage names as columns.
+
+![Restoration Inputs tab after Scan](docs/screenshots/14_restoration_inputs_scan.png)
+
+![Restoration Inputs tab after Compute, with a land-cover crosswalk applied](docs/screenshots/15_restoration_inputs_compute.png)
+
+### 7. Run
 
 Where you configure and trigger an actual SWAT run. The top card holds the one path this app needs configured per machine: the `rev670_64rel.exe` executable (validated before it can be used). The "Simulation Period" card exposes the `file.cio` fields that matter for a single run without opening the raw file — start/end year (`NBYR`/`IYR`), warm-up years excluded from output (`NYSKIP`), and print frequency (`IPRINT`: Daily/Monthly/Yearly) — each editable with its own confirmation step.
 
@@ -80,25 +92,25 @@ Where you configure and trigger an actual SWAT run. The top card holds the one p
 
 ![Run tab](docs/screenshots/08_run.png)
 
-### 7. Results (output.rch)
+### 8. Results (output.rch)
 
 Where you consult reach-level outputs after a run: flow and loads per stream reach, across all **47 variables** SWAT2012 rev670 writes to `output.rch` (flow, sediment, organic/mineral N and P, pesticide, dissolved oxygen, and more). "Organize .rch" parses the file once, reconstructs real calendar dates from the run's period/frequency in `file.cio`, and writes one time-series CSV per reach into `tool_outputs/rch_timeseries/` — reopening the project later reads that cache instead of reparsing. Pick a reach and a variable to plot its time series; the small map (built from the shapefiles configured in Project) highlights the selected reach among all subbasins/reaches — it's static, there's no click-to-select on the map itself.
 
 ![Results (.rch) tab](docs/screenshots/09_results_rch.png)
 
-### 8. Results (output.sub)
+### 9. Results (output.sub)
 
 The same idea as `.rch`, but for the **subbasin water balance** in `output.sub` (24 variables — precipitation, ET, surface/lateral/groundwater flow contributions, sediment yield, etc.) instead of reach routing. "Organize .sub" caches one CSV per subbasin the same way, and the map highlights the selected subbasin polygon instead of a reach.
 
 ![Results (.sub) tab](docs/screenshots/10_results_sub.png)
 
-### 9. HRU Results (output.hru)
+### 10. HRU Results (output.hru)
 
 The most detailed output level: the HRU water/nutrient balance, with **80 variables** per HRU. `output.hru` in Daily mode can be well over 1 GB across thousands of HRUs, so instead of CSVs "Organize .hru output" streams it straight into a local SQLite database (`tool_outputs/hru_timeseries.db`) — the app never loads the full file, or even a full HRU's series, into memory at once; every chart and export queries the database on demand. Pick a subbasin, then an HRU within it, then a variable, and the chart updates immediately. Four export options cover the common cases without hand-picking columns: the single series shown, one variable for every HRU in the visible subbasin (wide CSV, one column per HRU), every variable for the visible HRU, or a checklist of specific variables you pick.
 
 ![HRU Results tab](docs/screenshots/11_hru_results.png)
 
-### 10. Batch Scenarios
+### 11. Batch Scenarios
 
 Where you run a whole series of scenarios unattended against the open project, kept fixed as the reference. It holds two independent engines, stacked as two cards in the same tab — each step of either one copies the reference project into its own folder, runs a full `swat2012.exe` on that copy, and (per checkboxes you control) organizes `output.rch`/`.sub`/`.hru` automatically afterward.
 
