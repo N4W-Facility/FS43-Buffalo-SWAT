@@ -879,6 +879,31 @@ vez de CSV — ver esa pestaña más abajo.
   de `.sol` — solo `swat_io.sol_parser.read_hydrologic_group`, que no
   depende de él.
 
+  **Log en vivo y ventana de síntesis al aplicar** (`scenarios/nbs_apply.py`
+  + `ui/nbs_apply_summary_window.py`, 2026-08-14, pedido explícito del
+  usuario: el detalle por HRU de una aplicación grande solo se veía al
+  terminar, en una línea de conteo ("applied 45/50 HRU...") sin forma de
+  revisar qué falló sin abrir el CSV de auditoría). `apply_nbs` gana un
+  parámetro opcional `on_hru_result`, invocado justo después de procesar
+  cada HRU con el mismo `NbSApplyHRUResult` que queda en `report.results`
+  — sin ningún formateo de texto ahí (`scenarios/` no depende de UI), eso
+  lo arma cada flujo de `ui/tab_nbs.py` (manual, por área, por área en
+  todas las subcuencas) acumulando una línea por HRU y mandando el texto
+  completo acumulado a su log box vía `report_progress`, mismo patrón de
+  "acumulado completo por ciclo" que ya usa `engine/run.py` para el log de
+  Run. Al terminar, además de la línea de conteo, se abre sola
+  `NbSApplySummaryWindow` (Toplevel modal, mismo criterio que el resto de
+  ventanas de la app) con una tabla (subcuenca/HRU/status/HRU_FR/mensaje)
+  poblada directo desde `report.results` — sin cálculo nuevo, es la misma
+  data que ya iba al CSV — con filas de error resaltadas y una casilla
+  "Show errors only" para no tener que revisar HRU por HRU en un lote
+  grande. Los tests de UI de esta suite (`test_nbs_tab_smoke.py`,
+  `test_nbs_area_apply_tab_smoke.py`, `test_nbs_mass_apply_tab_smoke.py`)
+  mockean `NbSApplySummaryWindow` igual que `ConfirmDialog`: al ser un
+  Toplevel modal (`grab_set()`) que se abre solo, dejarlo real en un test
+  colgaría el grab sobre el `hidden_root` module-scoped que comparten
+  varios tests del mismo archivo.
+
   **Edición de una NbS ya creada** (`NbSWizardWindow(..., existing=...)`,
   botón "Edit..." o doble clic en la biblioteca, 2026-08-11): mismo
   wizard de creación, pre-poblado desde la `NbSDefinition` existente —

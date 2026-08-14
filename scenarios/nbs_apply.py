@@ -40,6 +40,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 
@@ -318,13 +319,27 @@ def _apply_to_one_hru(
     return NbSApplyHRUResult(subbasin, hru, "applied", hru_fr=hru_fr)
 
 
-def apply_nbs(project_dir: str | Path, nbs: NbSDefinition, targets: list[tuple[int, int]]) -> NbSApplyReport:
+def apply_nbs(
+    project_dir: str | Path,
+    nbs: NbSDefinition,
+    targets: list[tuple[int, int]],
+    *,
+    on_hru_result: Callable[[NbSApplyHRUResult], None] | None = None,
+) -> NbSApplyReport:
     """Aplica ``nbs`` a cada ``(subbasin, hru)`` de ``targets``.
 
     Lanza ``NbSApplyError`` sin tocar ningún archivo si la NbS misma está
     incompleta (validación de conjunto, ver guía sección 23). Un fallo
     puntual por HRU (HSG sin CN2, validación .hru, E/S) se reporta en
     ``NbSApplyReport.results`` y no aborta el resto del lote.
+
+    ``on_hru_result``, si se da, se invoca justo después de procesar cada
+    HRU (con el mismo ``NbSApplyHRUResult`` que queda en
+    ``report.results``) -- pedido explícito del usuario, 2026-08-14: quería
+    ver el detalle de cada HRU reflejado en el log mientras la aplicación
+    corre, no solo al terminar. Sin formateo de texto acá (eso es capa de
+    UI, ver ui/tab_nbs.py) para no mezclar mensajes traducibles en un
+    módulo de scenarios/ sin dependencias de UI.
     """
     txtinout_dir = Path(project_dir) / "TxtInOut"
     plant_dat = parse_plant_dat_file(txtinout_dir / "plant.dat")
@@ -342,6 +357,8 @@ def apply_nbs(project_dir: str | Path, nbs: NbSDefinition, targets: list[tuple[i
         except Exception as exc:  # noqa: BLE001 - se reporta y se sigue, un fallo puntual no aborta el lote
             result = NbSApplyHRUResult(subbasin, hru, "error", str(exc))
         report.results.append(result)
+        if on_hru_result is not None:
+            on_hru_result(result)
 
     log_action(
         project_dir,

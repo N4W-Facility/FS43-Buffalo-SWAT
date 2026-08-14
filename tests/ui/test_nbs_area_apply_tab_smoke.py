@@ -109,6 +109,11 @@ def _install_synchronous_mocks(monkeypatch) -> None:
         tab_nbs_module, "run_in_background",
         lambda widget, work, *, on_progress, on_done, on_error, **_kw: on_done(work(lambda _m: None)),
     )
+    # La ventana de síntesis (ui/nbs_apply_summary_window.py) es un Toplevel
+    # modal (grab_set()) que se abre sola al terminar Apply -- mockeada acá
+    # igual que ConfirmDialog, para no dejar un grab real colgado entre
+    # tests que comparten el mismo hidden_root module-scoped.
+    monkeypatch.setattr(tab_nbs_module, "NbSApplySummaryWindow", lambda *args, **kwargs: None)
 
 
 def test_area_apply_card_lists_subbasin_coverages_on_project_open(hidden_root, config, project, monkeypatch) -> None:

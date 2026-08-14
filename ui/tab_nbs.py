@@ -34,7 +34,7 @@ from config.cpnm_names import name_for
 from config.settings import ConfigManager
 from scenarios.hru_draft import list_subbasin_hru_ids, load_subbasin_hru_files
 from scenarios.nbs import NbSDefinition, delete_definition, load_library
-from scenarios.nbs_apply import NbSApplyReport, apply_nbs, write_apply_report_csv
+from scenarios.nbs_apply import NbSApplyHRUResult, NbSApplyReport, apply_nbs, write_apply_report_csv
 from scenarios.nbs_area_apply import (
     AreaAllocationPlan,
     parse_priority_text,
@@ -54,6 +54,7 @@ from swat_io.sub_parser import parse_sub_file
 from swat_io.tool_outputs import tool_outputs_dir
 
 from .dialog_confirm import ConfirmDialog
+from .nbs_apply_summary_window import NbSApplySummaryWindow
 from .nbs_wizard_window import NbSWizardWindow
 from .tasks import run_in_background
 from .widgets import ReadOnlyField, bind_responsive_wraplength, build_scrollable_treeview, palette, style_combobox
@@ -86,12 +87,14 @@ class NbSTab(ctk.CTkFrame):
         config: ConfigManager,
         *,
         on_run_state_changed: Callable[[bool], None] = lambda running: None,
+        on_library_changed: Callable[[], None] = lambda: None,
         **kwargs,
     ) -> None:
         super().__init__(master, fg_color="transparent", **kwargs)
         self._config = config
         self._colors = palette(config)
         self._on_run_state_changed = on_run_state_changed
+        self._on_library_changed = on_library_changed
 
         self._project_dir: Path | None = None
         self._library: list[NbSDefinition] = []
@@ -635,6 +638,8 @@ class NbSTab(ctk.CTkFrame):
         self._delete_button.configure(state="disabled")
         self._edit_button.configure(state="disabled")
 
+        self._on_library_changed()
+
     def _on_new_nbs_clicked(self) -> None:
         if self._project_dir is None:
             return
@@ -750,18 +755,37 @@ class NbSTab(ctk.CTkFrame):
         self._set_apply_log("")
         self._on_run_state_changed(True)
 
-        def work(_report_progress):
-            return apply_nbs(project_dir, definition, targets)
+        def work(report_progress):
+            lines: list[str] = []
 
-        run_in_background(self, work, on_progress=lambda _m: None, on_done=self._on_apply_done, on_error=self._on_apply_error)
+            def on_result(result: NbSApplyHRUResult) -> None:
+                lines.append(self._format_apply_log_line(result))
+                report_progress("\n".join(lines))
 
-    def _write_apply_report(self, report: NbSApplyReport) -> str:
+            return apply_nbs(project_dir, definition, targets, on_hru_result=on_result)
+
+        run_in_background(self, work, on_progress=self._set_apply_log, on_done=self._on_apply_done, on_error=self._on_apply_error)
+
+    def _format_apply_log_line(self, result: NbSApplyHRUResult) -> str:
+        if result.status == "applied":
+            return self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru)
+        return self._config.text("nbs_tab.log_line_error").format(
+            subbasin=result.subbasin, hru=result.hru, error=result.message
+        )
+
+    def _write_apply_report(self, report: NbSApplyReport) -> Path:
         """Escribe el CSV de auditoría de esta aplicación (subbasin/hru/
-        status/hru_fr/message) y devuelve su ruta como texto para el log --
-        compartido por Apply manual y Apply by area, ambos usan el mismo
-        NbSApplyReport."""
-        csv_path = write_apply_report_csv(self._project_dir, report, datetime.now())
-        return str(csv_path)
+        status/hru_fr/message) y devuelve su ruta -- compartido por los tres
+        flujos de Apply (manual, por área, por área en todas las
+        subcuencas), todos usan el mismo NbSApplyReport."""
+        return write_apply_report_csv(self._project_dir, report, datetime.now())
+
+    def _show_apply_summary(self, report: NbSApplyReport, csv_path: Path) -> None:
+        """Abre la ventana de síntesis con el detalle por HRU de esta
+        aplicación -- se dispara sola al terminar (pedido explícito del
+        usuario, 2026-08-14), sin esperar a que abra el CSV o cuente los
+        errores a mano en el log de texto."""
+        NbSApplySummaryWindow(self, self._config, report=report, csv_path=csv_path)
 
     def _on_apply_done(self, report: NbSApplyReport) -> None:
         self._apply_status_label.configure(
@@ -770,18 +794,12 @@ class NbSTab(ctk.CTkFrame):
             ),
             text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
         )
-        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=self._write_apply_report(report))]
-        for result in report.results:
-            if result.status == "applied":
-                lines.append(self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru))
-            else:
-                lines.append(
-                    self._config.text("nbs_tab.log_line_error").format(
-                        subbasin=result.subbasin, hru=result.hru, error=result.message
-                    )
-                )
+        csv_path = self._write_apply_report(report)
+        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=csv_path)]
+        lines.extend(self._format_apply_log_line(result) for result in report.results)
         self._set_apply_log("\n".join(lines))
         self._finish_apply()
+        self._show_apply_summary(report, csv_path)
 
     def _on_apply_error(self, error: Exception) -> None:
         self._apply_status_label.configure(
@@ -1066,11 +1084,17 @@ class NbSTab(ctk.CTkFrame):
         )
         self._on_run_state_changed(True)
 
-        def work(_report_progress):
-            return apply_nbs(project_dir, definition, targets)
+        def work(report_progress):
+            lines: list[str] = []
+
+            def on_result(result: NbSApplyHRUResult) -> None:
+                lines.append(self._format_apply_log_line(result))
+                report_progress("\n".join(lines))
+
+            return apply_nbs(project_dir, definition, targets, on_hru_result=on_result)
 
         run_in_background(
-            self, work, on_progress=lambda _m: None, on_done=self._on_area_apply_done, on_error=self._on_area_apply_error
+            self, work, on_progress=self._set_area_log, on_done=self._on_area_apply_done, on_error=self._on_area_apply_error
         )
 
     def _on_area_apply_done(self, report: NbSApplyReport) -> None:
@@ -1080,18 +1104,12 @@ class NbSTab(ctk.CTkFrame):
             ),
             text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
         )
-        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=self._write_apply_report(report))]
-        for result in report.results:
-            if result.status == "applied":
-                lines.append(self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru))
-            else:
-                lines.append(
-                    self._config.text("nbs_tab.log_line_error").format(
-                        subbasin=result.subbasin, hru=result.hru, error=result.message
-                    )
-                )
+        csv_path = self._write_apply_report(report)
+        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=csv_path)]
+        lines.extend(self._format_apply_log_line(result) for result in report.results)
         self._set_area_log("\n".join(lines))
         self._finish_area_apply()
+        self._show_apply_summary(report, csv_path)
 
     def _on_area_apply_error(self, error: Exception) -> None:
         self._area_status_label.configure(
@@ -1372,11 +1390,17 @@ class NbSTab(ctk.CTkFrame):
         self._start_mass_progress()
         self._on_run_state_changed(True)
 
-        def work(_report_progress):
-            return apply_nbs(project_dir, definition, targets)
+        def work(report_progress):
+            lines: list[str] = []
+
+            def on_result(result: NbSApplyHRUResult) -> None:
+                lines.append(self._format_apply_log_line(result))
+                report_progress("\n".join(lines))
+
+            return apply_nbs(project_dir, definition, targets, on_hru_result=on_result)
 
         run_in_background(
-            self, work, on_progress=lambda _m: None, on_done=self._on_mass_apply_done, on_error=self._on_mass_apply_error
+            self, work, on_progress=self._set_mass_log, on_done=self._on_mass_apply_done, on_error=self._on_mass_apply_error
         )
 
     def _on_mass_apply_done(self, report: NbSApplyReport) -> None:
@@ -1386,18 +1410,12 @@ class NbSTab(ctk.CTkFrame):
             ),
             text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
         )
-        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=self._write_apply_report(report))]
-        for result in report.results:
-            if result.status == "applied":
-                lines.append(self._config.text("nbs_tab.log_line_ok").format(subbasin=result.subbasin, hru=result.hru))
-            else:
-                lines.append(
-                    self._config.text("nbs_tab.log_line_error").format(
-                        subbasin=result.subbasin, hru=result.hru, error=result.message
-                    )
-                )
+        csv_path = self._write_apply_report(report)
+        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=csv_path)]
+        lines.extend(self._format_apply_log_line(result) for result in report.results)
         self._set_mass_log("\n".join(lines))
         self._finish_mass_apply()
+        self._show_apply_summary(report, csv_path)
 
     def _on_mass_apply_error(self, error: Exception) -> None:
         self._mass_status_label.configure(

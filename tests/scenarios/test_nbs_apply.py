@@ -230,6 +230,16 @@ def test_apply_missing_hru_reports_error_and_continues(project: Path) -> None:
     assert statuses[(99, 999)] == "error"
 
 
+def test_apply_invokes_on_hru_result_once_per_target_in_order(project: Path) -> None:
+    seen: list[tuple[int, int, str]] = []
+    report = apply_nbs(
+        project, _forest_nbs_existing(), [(1, 1), (99, 999)],
+        on_hru_result=lambda r: seen.append((r.subbasin, r.hru, r.status)),
+    )
+    assert seen == [(1, 1, "applied"), (99, 999, "error")]
+    assert seen == [(r.subbasin, r.hru, r.status) for r in report.results]
+
+
 def test_apply_incomplete_nbs_raises_before_touching_anything(project: Path) -> None:
     incomplete = NbSDefinition(
         name="incomplete", target_lulc="FRST", new_coverage=None,

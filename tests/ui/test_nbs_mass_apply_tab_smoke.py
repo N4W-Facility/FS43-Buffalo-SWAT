@@ -108,6 +108,10 @@ def _install_synchronous_mocks(monkeypatch) -> None:
         tab_nbs_module, "run_in_background",
         lambda widget, work, *, on_progress, on_done, on_error, **_kw: on_done(work(lambda _m: None)),
     )
+    # Ventana de síntesis modal (grab_set()) que se abre sola al terminar
+    # Apply -- mockeada igual que ConfirmDialog, ver mismo comentario en
+    # test_nbs_area_apply_tab_smoke.py.
+    monkeypatch.setattr(tab_nbs_module, "NbSApplySummaryWindow", lambda *args, **kwargs: None)
 
 
 def _nbs_definition() -> NbSDefinition:

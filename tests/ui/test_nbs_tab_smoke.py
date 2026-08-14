@@ -357,7 +357,7 @@ def test_apply_rereads_library_json_to_pick_up_manual_edits(hidden_root, config,
     monkeypatch.setattr(tab_nbs_module, "ConfirmDialog", lambda master, cfg, *, message, on_confirm: on_confirm())
     captured: dict = {}
 
-    def fake_apply_nbs(project_dir, definition, targets):
+    def fake_apply_nbs(project_dir, definition, targets, *, on_hru_result=None):
         captured["canmx"] = definition.hru_params["CANMX"]
         return NbSApplyReport(nbs_name=definition.name, plant_id=None, cpnm=None, results=[])
 
@@ -366,6 +366,10 @@ def test_apply_rereads_library_json_to_pick_up_manual_edits(hidden_root, config,
         tab_nbs_module, "run_in_background",
         lambda widget, work, *, on_progress, on_done, on_error, **_kw: on_done(work(lambda _m: None)),
     )
+    # Ventana de síntesis modal (grab_set()) que se abre sola al terminar
+    # Apply -- mockeada para no dejar un grab real colgado en el
+    # hidden_root module-scoped que comparten los tests de este archivo.
+    monkeypatch.setattr(tab_nbs_module, "NbSApplySummaryWindow", lambda *args, **kwargs: None)
 
     tab._on_apply_clicked()
 
