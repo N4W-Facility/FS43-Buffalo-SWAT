@@ -100,14 +100,17 @@ The most detailed output level: the HRU water/nutrient balance, with **80 variab
 
 ### 10. Batch Scenarios
 
-Where you run a whole series of scenarios unattended against the open project, kept fixed as the reference. Two independent engines, both producing one full `swat2012.exe` run per step:
+Where you run a whole series of scenarios unattended against the open project, kept fixed as the reference. It holds two independent engines, stacked as two cards in the same tab — each step of either one copies the reference project into its own folder, runs a full `swat2012.exe` on that copy, and (per checkboxes you control) organizes `output.rch`/`.sub`/`.hru` automatically afterward.
 
-- **Land-cover percentage series** — grow a target coverage to 10%, 20%, 30%... of each subbasin's area, reassigning `HRU_FR` from donor coverages by a configurable priority cascade (coverage → slope → soil). Only `HRU_FR` is touched, never any other calibrated parameter.
-- **NbS area batch** — apply an existing NbS by area across an increasing percentage series (10%, 20%, ... up to 100%), reusing the same by-area allocation engine as the NbS tab.
+**Land-cover percentage series** (top card): grow a target coverage to 10%, 20%, 30%... of each subbasin's area, reassigning `HRU_FR` from donor coverages by a configurable priority cascade (coverage → slope → soil). Only `HRU_FR` is touched, never any other calibrated parameter, and a subbasin with no HRU of the target coverage — or already above the requested %— is skipped rather than forced. "Download template" scans the open project and writes a CSV with the coverages/slopes/soils that actually exist in it, ready to edit.
 
-Each step copies the reference project into its own folder, applies the change, runs SWAT, and (per checkboxes you control) organizes `output.rch`/`.sub`/`.hru` automatically — writing a detailed CSV report for that step plus a summary CSV across the whole series, so you can see how many subbasins/HRUs were touched and any area deficit without opening every folder. Once a batch exists (from this run or a previous one), "Compare scenarios..." opens a window that pulls the same reach/subbasin/HRU variable across every scenario into a single CSV, one column per scenario — RCH and SUB always cover the whole watershed, while HRU can target one specific HRU or a group filtered by coverage/slope/soil and aggregated (sum or area-weighted mean, configurable per variable).
+![Batch Scenarios tab — land-cover percentage series](docs/screenshots/12_batch.png)
 
-![Batch Scenarios tab](docs/screenshots/12_batch.png)
+**NbS area batch** (second card, below it in the same scrollable tab): the batch version of the NbS tab's "Apply an NbS by area (all subbasins)" — you give the *same* `subbasin, area_ha, <source coverages>` CSV matrix (the area a 100% step should target per subbasin, and which existing coverages it should come from), pick an NbS from the library, and a percentage series (e.g. `10,20,...,100`); each step scales that area to its percentage and runs independently from the reference project, never chained. Unlike the NbS tab's own Apply-by-area, a step here is never blocked by a shortfall — it applies whatever is achievable with the assigned source coverages and documents the deficit, both in the live log and in a per-step `nbs_area_batch_report.csv`.
+
+![Batch Scenarios tab — NbS area batch, pointed at an already-finished run](docs/screenshots/13_batch_nbs_area.png)
+
+Both cards write a per-step CSV report plus a summary CSV across the whole series (subbasins/HRUs touched, area or % achieved, any deficit), so you can see how a batch went without opening every scenario folder. Once a batch exists (from either card, this run or a previous one), each card's own "Compare scenarios..." opens a window that pulls the same reach/subbasin/HRU variable across every scenario into a single CSV, one column per scenario — RCH and SUB always cover the whole watershed, while HRU can target one specific HRU or a group filtered by coverage/slope/soil and aggregated (sum or area-weighted mean, configurable per variable).
 
 ## Notes
 
