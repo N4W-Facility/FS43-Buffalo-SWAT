@@ -483,6 +483,17 @@ class NbSWizardWindow(ctk.CTkToplevel):
         self._copy_scan_codes = [r.cpnm for r in records]
         values = [f"{r.cpnm} — {name_for(r.cpnm)}" for r in records]
 
+        # Mismas coberturas reales sin plant.dat que Step 2 (ej. urbanas) --
+        # este paso es precisamente de dónde salen PLANT_ID/IURBAN/URBLU
+        # para esas coberturas (ver scenarios.nbs_apply.validate_nbs_definition),
+        # así que tienen que poder escanearse acá igual que cualquier CPNM.
+        non_plant_labels = discover_non_plant_land_uses(self._txtinout_dir, self._plant_dat)
+        self._copy_scan_codes += non_plant_labels
+        values += [
+            self._config.text("nbs_wizard.existing_non_plant_option").format(label=label)
+            for label in non_plant_labels
+        ]
+
         row0 = ctk.CTkFrame(self._content, fg_color="transparent")
         row0.grid(row=0, column=0, sticky="ew")
         row0.columnconfigure(0, weight=1)
@@ -696,6 +707,15 @@ class NbSWizardWindow(ctk.CTkToplevel):
     def _collect_step_mgt_initial(self) -> bool:
         igro = int(self._igro_selector.get())
         mgt_initial: dict[str, float | int | None] = {"IGRO": igro, "LAI_INIT": None, "BIO_INIT": None, "PHU_PLT": None}
+        # PLANT_ID/IURBAN/URBLU (target no vegetal, ej. urbano) los pobló
+        # "Copy from existing", no este paso -- preservarlos en vez de
+        # reconstruir el dict entero sin ellos (bug reportado por el
+        # usuario, 2026-09-15: "Missing PLANT_ID" pese a haber usado Copy
+        # from existing, porque este paso corre después en la secuencia y
+        # pisaba mgt_initial completo).
+        for name in ("PLANT_ID", "IURBAN", "URBLU"):
+            if name in self._state["mgt_initial"]:
+                mgt_initial[name] = self._state["mgt_initial"][name]
         if igro == 1:
             for name, entry in self._initial_entries.items():
                 raw = entry.get().strip()
