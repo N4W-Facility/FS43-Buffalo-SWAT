@@ -33,7 +33,7 @@ from scenarios.nbs import (
     add_or_replace,
     load_library,
 )
-from scenarios.nbs_analysis import scan_existing_parameter_combinations
+from scenarios.nbs_analysis import discover_non_plant_land_uses, scan_existing_parameter_combinations
 from scenarios.nbs_apply import NbSApplyError, sync_new_coverage_to_plant_dat, validate_nbs_definition
 from swat_io.mgt.operation_specs import MGT_OPERATION_NAMES
 from swat_io.plant.models import LINE2_FIELDS, LINE3_FIELDS, LINE4_FIELDS, LINE5_FIELDS
@@ -316,6 +316,21 @@ class NbSWizardWindow(ctk.CTkToplevel):
             records = self._sorted_plant_records()
             self._existing_cpnm_codes = [r.cpnm for r in records]
             values = [f"{r.cpnm} — {name_for(r.cpnm)}" for r in records]
+
+            # Coberturas reales del proyecto sin registro en plant.dat (ej.
+            # urbanas: URBN/URLD/URMD/URHD) -- pedido explícito del usuario,
+            # 2026-09-15. Se muestran aparte, sin un nombre inventado (no
+            # hay parser de urban.dat en este proyecto para saber su
+            # nombre real), y "Copy from existing" (paso siguiente) es
+            # obligatorio para estas: ahí es de donde salen PLANT_ID/
+            # IURBAN/URBLU (ver validate_nbs_definition).
+            non_plant_labels = discover_non_plant_land_uses(self._txtinout_dir, self._plant_dat)
+            self._existing_cpnm_codes += non_plant_labels
+            values += [
+                self._config.text("nbs_wizard.existing_non_plant_option").format(label=label)
+                for label in non_plant_labels
+            ]
+
             style = style_combobox(self._config)
             self._existing_cpnm_selector = ttk.Combobox(
                 self._coverage_body, style=style, state="readonly", values=values, width=42
@@ -826,7 +841,8 @@ class NbSWizardWindow(ctk.CTkToplevel):
             description=self._state["description"],
         )
 
-        errors = validate_nbs_definition(definition, self._plant_dat)
+        real_land_uses = set(discover_non_plant_land_uses(self._txtinout_dir, self._plant_dat))
+        errors = validate_nbs_definition(definition, self._plant_dat, real_land_uses)
         if errors:
             self._set_status("; ".join(errors))
             return

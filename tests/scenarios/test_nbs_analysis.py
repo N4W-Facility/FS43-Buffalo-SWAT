@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scenarios.nbs_analysis import scan_existing_parameter_combinations
+from scenarios.nbs_analysis import discover_non_plant_land_uses, scan_existing_parameter_combinations
 
 _HRU = (
     "Subbasin:1   Hru:{hru}   Luse:AGRL   Soil: 1013090         Slope: 0-9999\n"
@@ -67,3 +67,33 @@ def test_scan_groups_identical_hru_mgt_but_splits_cn2_by_hsg(project: Path) -> N
 
 def test_scan_unknown_coverage_returns_empty(project: Path) -> None:
     assert scan_existing_parameter_combinations(project, "NOPE") == []
+
+
+class _FakePlantDat:
+    """plant.dat mínimo para probar discover_non_plant_land_uses sin
+    depender del parser real -- solo necesita responder qué CPNM conoce."""
+
+    def __init__(self, cpnms: set[str]) -> None:
+        self._cpnms = cpnms
+
+    def get_record_by_cpnm(self, cpnm: str):
+        return object() if cpnm in self._cpnms else None
+
+
+def test_discover_non_plant_land_uses_finds_only_real_labels_absent_from_plant_dat(project: Path) -> None:
+    # El fixture del módulo ya tiene dos HRU con Luse:AGRL (en plant.dat);
+    # agregamos una tercera con una etiqueta urbana real que plant.dat no
+    # conoce -- solo esa debe aparecer.
+    (project / "000010003.hru").write_text(
+        "Subbasin:1   Hru:3   Luse:URLD   Soil: 1013090         Slope: 0-9999\n"
+        "        0.1000    | HRU_FR : Fraction of subbasin area contained in HRU\n",
+        encoding="utf-8",
+    )
+
+    labels = discover_non_plant_land_uses(project, _FakePlantDat({"AGRL"}))
+
+    assert labels == ["URLD"]
+
+
+def test_discover_non_plant_land_uses_empty_when_everything_is_in_plant_dat(project: Path) -> None:
+    assert discover_non_plant_land_uses(project, _FakePlantDat({"AGRL"})) == []

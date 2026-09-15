@@ -259,6 +259,129 @@ def test_validate_nbs_definition_flags_missing_target_coverage(project: Path) ->
     assert any("NOPE" in e for e in errors)
 
 
+def _urban_nbs(**mgt_initial_overrides) -> NbSDefinition:
+    mgt_initial = {"IGRO": 0, "PLANT_ID": 1, "IURBAN": 1, "URBLU": 3}
+    mgt_initial.update(mgt_initial_overrides)
+    return NbSDefinition(
+        name="Urbanize", target_lulc="URLD", new_coverage=None,
+        hru_params={"CANMX": 1.0, "OV_N": 0.1, "RSDIN": 0.0},
+        mgt_initial=mgt_initial, cn2_by_hsg={"C": 98.0}, operations=[],
+    )
+
+
+def test_validate_nbs_definition_rejects_non_plant_target_not_in_real_land_uses(project: Path) -> None:
+    # "URLD" no está en plant.dat ni en real_land_uses (ninguna HRU real del
+    # proyecto lo usa todavía) -- mismo error que cualquier código
+    # desconocido, no se trata distinto solo porque "suena" urbano.
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    errors = validate_nbs_definition(_urban_nbs(), pdat, real_land_uses=set())
+    assert any("URLD" in e and "plant.dat" in e for e in errors)
+
+
+def test_validate_nbs_definition_accepts_complete_non_plant_target(project: Path) -> None:
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    errors = validate_nbs_definition(_urban_nbs(), pdat, real_land_uses={"URLD"})
+    assert errors == []
+
+
+def test_validate_nbs_definition_requires_plant_id_iurban_urblu_for_non_plant_target(project: Path) -> None:
+    pdat = parse_plant_dat_file(project / "TxtInOut" / "plant.dat")
+    incomplete = _urban_nbs(PLANT_ID=None, URBLU=None)
+
+    errors = validate_nbs_definition(incomplete, pdat, real_land_uses={"URLD"})
+
+    assert any("PLANT_ID" in e for e in errors)
+    assert any("URBLU" in e for e in errors)
+    assert not any("IURBAN" in e for e in errors)  # ese sí estaba presente
+
+
+# -- apply_nbs a un target no vegetal (urbano) -----------------------------------
+
+# HRU 2: a convertir de AGRL a URLD -- su .mgt ya trae la sección "Urban
+# Management Parameters" (IURBAN/URBLU) en 0, como cualquier .mgt real de
+# SWAT (ver guía del proyecto, sección 11 "Urbanización"), independiente de
+# si esa HRU puntual es urbana hoy.
+_MGT_WITH_URBAN_SECTION = (
+    " .mgt file HRU:2 Subbasin:1 HRU:2 Luse:AGRL\n"
+    "               0    | NMGT:Management code\n"
+    "Initial Plant Growth Parameters\n"
+    "               0    | IGRO: Land cover status: 0-none growing; 1-growing\n"
+    "               0    | PLANT_ID: Land cover ID number (IGRO = 1)\n"
+    "            0.00    | LAI_INIT: Initial leaf are index (IGRO = 1)\n"
+    "            0.00    | BIO_INIT: Initial biomass (kg/ha) (IGRO = 1)\n"
+    "            0.00    | PHU_PLT: Number of heat units to bring plant to maturity (IGRO = 1)\n"
+    "General Management Parameters\n"
+    "            0.20    | BIOMIX: Biological mixing efficiency\n"
+    "           83.00    | CN2: Initial SCS CN II value\n"
+    "            1.00    | USLE_P: USLE support practice factor\n"
+    "            0.00    | BIO_MIN: Minimum biomass for grazing (kg/ha)\n"
+    "           0.000    | FILTERW: width of edge of field filter strip (m)\n"
+    "Urban Management Parameters\n"
+    "               0    | IURBAN: urban simulation code, 0-none, 1-USGS, 2-buildup/washoff\n"
+    "               0    | URBLU: urban land type\n"
+    "Management Operations:\n"
+    "               1    | NROT: number of years of rotation\n"
+    "Operation Schedule:\n"
+    "  5 15           1   19          1084.00000   0.00     0.00000 0.00   0.00  0.00\n"
+    " 10 22           5                  0.00000\n"
+    "                17\n"
+)
+
+# HRU 3: HRU urbana real ya existente en el proyecto -- nunca se toca, solo
+# existe para que discover_non_plant_land_uses encuentre "URLD" como
+# cobertura real (nunca inventada) y para representar de dónde "Copy from
+# existing" sacaría PLANT_ID/IURBAN/URBLU en el wizard real.
+_URBAN_REFERENCE_HRU = (
+    "Subbasin:1   Hru:3   Luse:URLD   Soil: 1013090         Slope: 0-9999\n"
+    "        0.1000    | HRU_FR : Fraction of subbasin area contained in HRU\n"
+)
+
+
+@pytest.fixture
+def project_with_urban_reference(project: Path) -> Path:
+    txtinout = project / "TxtInOut"
+    (txtinout / "000010002.hru").write_text(_HRU.replace("Hru:1", "Hru:2"), encoding="utf-8")
+    (txtinout / "000010002.mgt").write_text(_MGT_WITH_URBAN_SECTION, encoding="utf-8")
+    (txtinout / "000010002.sol").write_text(_SOL.replace("HRU:1", "HRU:2"), encoding="utf-8")
+    (txtinout / "000010003.hru").write_text(_URBAN_REFERENCE_HRU, encoding="utf-8")
+    return project
+
+
+def test_apply_urban_target_writes_iurban_and_urblu(project_with_urban_reference: Path) -> None:
+    from swat_io.hru.parser import parse_hru_file
+    from swat_io.mgt.parser import parse_mgt_file
+
+    report = apply_nbs(project_with_urban_reference, _urban_nbs(), [(1, 2)])
+
+    assert report.applied_count == 1
+    assert report.error_count == 0
+    assert report.plant_id == 1  # de mgt_initial["PLANT_ID"], no resuelto por CPNM
+    assert report.cpnm == "URLD"
+
+    mgt = parse_mgt_file(project_with_urban_reference / "TxtInOut" / "000010002.mgt")
+    assert mgt.get_header_value("IURBAN") == 1
+    assert mgt.get_header_value("URBLU") == 3
+    assert mgt.get_header_value("PLANT_ID") == 1
+    assert mgt.metadata.land_use == "URLD"
+
+    hru = parse_hru_file(project_with_urban_reference / "TxtInOut" / "000010002.hru")
+    assert hru.metadata.land_use == "URLD"
+
+    # la HRU urbana de referencia (nunca target de este Apply) sigue intacta.
+    reference = parse_hru_file(project_with_urban_reference / "TxtInOut" / "000010003.hru")
+    assert reference.metadata.land_use == "URLD"
+
+
+def test_apply_urban_target_without_real_land_use_raises(project_with_urban_reference: Path) -> None:
+    # Si nadie hubiera pasado antes por Restoration Inputs/HRU real con
+    # Luse:URLD, discover_non_plant_land_uses no la encontraría -- mismo
+    # error que cualquier cobertura inventada.
+    (project_with_urban_reference / "TxtInOut" / "000010003.hru").unlink()
+
+    with pytest.raises(NbSApplyError):
+        apply_nbs(project_with_urban_reference, _urban_nbs(), [(1, 2)])
+
+
 def _rfor_definition() -> NbSDefinition:
     return NbSDefinition(
         name="Restored forest (new species)",

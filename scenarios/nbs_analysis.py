@@ -32,7 +32,15 @@ from .nbs import NbSOperation
 _ROUND_DECIMALS = 4
 
 _HRU_PARAM_NAMES: tuple[str, ...] = ("CANMX", "OV_N", "RSDIN")
-_MGT_INITIAL_NAMES: tuple[str, ...] = ("IGRO", "LAI_INIT", "BIO_INIT", "PHU_PLT")
+# PLANT_ID/IURBAN/URBLU (2026-09-15): agregados para que "copiar de una
+# configuración existente" también capture la identidad completa de una
+# HRU urbana real (URBN/URLD/URMD/URHD, ver
+# discover_non_plant_land_uses) -- a diferencia de una cobertura vegetal,
+# donde PLANT_ID se resuelve por CPNM contra plant.dat (ver
+# scenarios.nbs_apply._resolve_plant_id), una cobertura no vegetal no
+# tiene ese camino: su PLANT_ID/IURBAN/URBLU solo pueden venir de copiar
+# una HRU real de ese tipo, nunca inventarse.
+_MGT_INITIAL_NAMES: tuple[str, ...] = ("IGRO", "LAI_INIT", "BIO_INIT", "PHU_PLT", "PLANT_ID", "IURBAN", "URBLU")
 
 
 def _round(value):
@@ -185,3 +193,22 @@ def scan_existing_parameter_combinations(txtinout_dir: str | Path, target_lulc: 
     """Punto de entrada único: escanea y agrupa en un solo paso."""
     samples = collect_existing_samples(txtinout_dir, target_lulc)
     return group_into_combinations(samples)
+
+
+def discover_non_plant_land_uses(txtinout_dir: str | Path, plant_dat) -> list[str]:
+    """Etiquetas de cobertura (Luse) que aparecen de verdad en las HRU del
+    proyecto pero no tienen ningún registro en plant.dat -- típicamente
+    clases urbanas (URBN/URLD/URMD/URHD, identificadas en .mgt por
+    IURBAN/URBLU en vez de IGRO/PLANT_ID, ver guía del proyecto sección
+    "Urbanización"). Pedido explícito del usuario, 2026-09-15, para poder
+    elegirlas como "existing" target de una NbS -- nunca se inventa una
+    lista de clases posibles (no hay parser de urban.dat en este proyecto):
+    solo lo que las HRU reales del proyecto ya usan."""
+    labels: set[str] = set()
+    for hru_path in find_hru_files(txtinout_dir, recursive=False):
+        hru_file = parse_hru_file(hru_path)
+        land_use = hru_file.metadata.land_use
+        if land_use is None or plant_dat.get_record_by_cpnm(land_use) is not None:
+            continue
+        labels.add(land_use)
+    return sorted(labels)

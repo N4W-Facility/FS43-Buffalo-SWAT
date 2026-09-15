@@ -635,6 +635,7 @@
   "nbs_wizard.coverage_existing": "Use an existing land cover",
   "nbs_wizard.coverage_new": "Create a new land cover",
   "nbs_wizard.existing_cpnm_label": "Land cover (from this project's plant.dat)",
+  "nbs_wizard.existing_non_plant_option": "{label} (non-vegetal, e.g. urban -- not in plant.dat; requires \"Copy from existing\")",
   "nbs_wizard.existing_cpnm_required": "Select a land cover.",
   "nbs_wizard.new_cpnm_label": "4-character plant code (CPNM)",
   "nbs_wizard.cpnm_length_error": "The plant code must be exactly 4 characters.",

@@ -45,6 +45,7 @@ from typing import Callable
 import pandas as pd
 
 from scenarios.activity_log import log_action
+from scenarios.nbs_analysis import discover_non_plant_land_uses
 from swat_io.common.atomic_write import atomic_write_bytes
 from swat_io.discovery import discover_subbasins
 from swat_io.hru.models import HRURawLine
@@ -117,16 +118,34 @@ class NbSApplyReport:
         return sum(1 for r in self.results if r.status == "error")
 
 
-def validate_nbs_definition(nbs: NbSDefinition, plant_dat) -> list[str]:
+def validate_nbs_definition(nbs: NbSDefinition, plant_dat, real_land_uses: set[str] | None = None) -> list[str]:
     """Validación de conjunto de una NbS (ver guía sección 23): lista de
     errores que impiden aplicarla. Lista vacía si está completa. Expuesta
     también para que la UI la use antes de guardar la NbS (no solo al
-    aplicarla), y así avisar temprano en vez de recién al aplicar."""
+    aplicarla), y así avisar temprano en vez de recién al aplicar.
+
+    ``real_land_uses`` (2026-09-15, ver
+    scenarios.nbs_analysis.discover_non_plant_land_uses): coberturas reales
+    del proyecto que no están en plant.dat -- típicamente urbanas
+    (URBN/URLD/URMD/URHD). Un target "existing" ahí es válido, pero como no
+    tiene registro en plant.dat, su PLANT_ID/IURBAN/URBLU no se pueden
+    resolver por CPNM (ver _resolve_plant_id): deben venir completos de
+    ``mgt_initial``, poblado por el paso "Copy from existing" del wizard
+    contra una HRU real de ese tipo -- nunca inventados."""
     errors: list[str] = []
 
     if nbs.new_coverage is None:
         if plant_dat.get_record_by_cpnm(nbs.target_lulc) is None:
-            errors.append(f"Target coverage '{nbs.target_lulc}' does not exist in this project's plant.dat.")
+            if not (real_land_uses and nbs.target_lulc in real_land_uses):
+                errors.append(f"Target coverage '{nbs.target_lulc}' does not exist in this project's plant.dat.")
+            else:
+                for name in ("PLANT_ID", "IURBAN", "URBLU"):
+                    if nbs.mgt_initial.get(name) is None:
+                        errors.append(
+                            f"Missing {name} (required for a non-vegetal target coverage like "
+                            f"'{nbs.target_lulc}' -- use \"Copy from existing\" to pull it from a real HRU "
+                            "of that type)."
+                        )
     else:
         if len(nbs.new_coverage.cpnm) != 4:
             errors.append("The new coverage's CPNM must be exactly 4 characters.")
@@ -216,8 +235,13 @@ def sync_new_coverage_to_plant_dat(project_dir: str | Path, nbs: NbSDefinition) 
 def _resolve_plant_id(project_txtinout: Path, nbs: NbSDefinition, plant_dat) -> tuple[int, str]:
     if nbs.new_coverage is None:
         record = plant_dat.get_record_by_cpnm(nbs.target_lulc)
-        assert record is not None  # ya validado por validate_nbs_definition
-        return record.icnum, record.cpnm
+        if record is not None:
+            return record.icnum, record.cpnm
+        # Cobertura real sin registro en plant.dat (ej. urbana) -- ya
+        # validado por validate_nbs_definition que mgt_initial trae
+        # PLANT_ID (además de IURBAN/URBLU, escritos en _apply_to_one_hru):
+        # no hay CPNM que resolver, target_lulc ya es la etiqueta final.
+        return int(nbs.mgt_initial["PLANT_ID"]), nbs.target_lulc
 
     # Camino normal desde 2026-08-11: el wizard ya sincronizó plant.dat al
     # guardar la NbS (ver sync_new_coverage_to_plant_dat), así que el ICNUM
@@ -297,6 +321,14 @@ def _apply_to_one_hru(
         value = nbs.mgt_initial.get(name)
         if value is not None:
             mgt_file.set_header_value(name, value)
+    # IURBAN/URBLU (2026-09-15): solo presentes en mgt_initial para un
+    # target no vegetal (ej. urbano, ver validate_nbs_definition) --
+    # ausentes en cualquier NbS vegetal normal, así que este bloque no
+    # cambia el comportamiento existente.
+    for name in ("IURBAN", "URBLU"):
+        value = nbs.mgt_initial.get(name)
+        if value is not None:
+            mgt_file.set_header_value(name, value)
     mgt_file.set_header_value("CN2", cn2_value)
 
     new_operations = []
@@ -344,7 +376,8 @@ def apply_nbs(
     txtinout_dir = Path(project_dir) / "TxtInOut"
     plant_dat = parse_plant_dat_file(txtinout_dir / "plant.dat")
 
-    definition_errors = validate_nbs_definition(nbs, plant_dat)
+    real_land_uses = set(discover_non_plant_land_uses(txtinout_dir, plant_dat))
+    definition_errors = validate_nbs_definition(nbs, plant_dat, real_land_uses)
     if definition_errors:
         raise NbSApplyError("The NbS cannot be applied: " + "; ".join(definition_errors))
 
