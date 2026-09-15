@@ -133,6 +133,37 @@ def test_apply_existing_coverage_writes_hru_and_mgt(project: Path) -> None:
     assert "Luse:AGRL" in sol_text
 
 
+def test_apply_resolves_real_file_when_header_hru_differs_from_filename(tmp_path: Path) -> None:
+    """Bug real reportado por el usuario, 2026-09-15: en un modelo SWAT
+    real, el sufijo del nombre de archivo (posición LOCAL dentro de la
+    subcuenca) y el "Hru:" del header (número GLOBAL en toda la cuenca)
+    pueden ser completamente distintos salvo en la subcuenca 1 (donde
+    coinciden por casualidad). ``targets`` siempre trae el número de
+    header (ver plan_area_allocation), así que aplicar sobre la subcuenca
+    2 de este fixture -- archivo 000020001.hru con header "Hru:88" --
+    debe escribir sobre ESE archivo real, nunca sobre uno reconstruido
+    como 000020088.hru (que no existe)."""
+    txtinout = tmp_path / "TxtInOut"
+    txtinout.mkdir()
+    (txtinout / "plant.dat").write_text(_PLANT_DAT, encoding="utf-8", newline="")
+    (txtinout / "000020001.hru").write_text(_HRU.replace("Subbasin:1", "Subbasin:2").replace("Hru:1", "Hru:88"), encoding="utf-8")
+    (txtinout / "000020001.mgt").write_text(_MGT.replace("Subbasin:1", "Subbasin:2"), encoding="utf-8")
+    (txtinout / "000020001.sol").write_text(_SOL.replace("Subbasin:1", "Subbasin:2"), encoding="utf-8")
+    write_synthetic_sub(txtinout / "000020000.sub", area_km2=10.0)
+    (txtinout / "000020000.pnd").write_text("", encoding="utf-8")
+
+    report = apply_nbs(tmp_path, _forest_nbs_existing(), [(2, 88)])
+
+    assert report.applied_count == 1
+    assert report.error_count == 0
+
+    from swat_io.hru.parser import parse_hru_file
+
+    hru = parse_hru_file(txtinout / "000020001.hru")
+    assert hru.metadata.land_use == "FRST"
+    assert hru.get_value("CANMX") == 3.0
+
+
 def test_apply_report_csv_includes_hru_fr_and_area_ha(project: Path) -> None:
     report = apply_nbs(project, _forest_nbs_existing(), [(1, 1)])
 

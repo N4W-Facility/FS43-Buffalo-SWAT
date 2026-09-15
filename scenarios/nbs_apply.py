@@ -33,6 +33,27 @@ el TxtInOut del proyecto abierto. Cada HRU se escribe todo-o-nada: un
 fallo puntual (HSG sin CN2 definido, validación .hru, error de E/S) se
 reporta y no aborta el resto del lote -- mismo criterio que el Materialize
 de HRUs y el batch de escenarios de cobertura.
+
+**Bug real corregido 2026-09-15** (reportado por el usuario: "Could not
+find the .hru/.mgt files" en subcuencas != 1): el nombre de archivo
+``NNNNNMMMM.hru`` codifica la posición LOCAL de esa HRU dentro de su
+subcuenca (1..cantidad de HRU de esa subcuenca), pero el "Hru:" que
+``swat_io.hru.parser`` lee del HEADER (``metadata.hru``, lo que
+``plan_area_allocation``/``plan_mass_area_allocation`` usan para armar
+``targets``) es el número GLOBAL de esa HRU en toda la cuenca --
+confirmado contra el modelo real Buffalo: la subcuenca 2 tiene archivos
+``000020001..000020080`` cuyos headers dicen ``Hru:88..167``.
+Reconstruir el nombre de archivo a partir de ese número (lo que hacía
+``_apply_to_one_hru`` antes) solo "funcionaba" en la subcuenca 1 por
+coincidencia (ahí el rango global arranca en 1, igual que el local); en
+cualquier otra subcuenca apuntaba a un archivo que no existe. Verificado
+contra las 55 subcuencas reales del modelo Buffalo que ninguna otra tiene
+superposición entre su rango local y su rango global de header, así que
+el fallo siempre fue un error limpio de "no encontrado", nunca una
+escritura silenciosa sobre la HRU equivocada. ``_index_subbasin_hru_paths``
+resuelve la ruta real buscando entre los archivos reales de la subcuenca
+cuál tiene ese número de header, en vez de asumir que coincide con el
+nombre de archivo.
 """
 from __future__ import annotations
 
@@ -45,6 +66,7 @@ from typing import Callable
 import pandas as pd
 
 from scenarios.activity_log import log_action
+from scenarios.hru_draft import list_subbasin_hru_files
 from scenarios.nbs_analysis import discover_non_plant_land_uses
 from swat_io.common.atomic_write import atomic_write_bytes
 from swat_io.discovery import discover_subbasins
@@ -269,17 +291,39 @@ def _resolve_plant_id(project_txtinout: Path, nbs: NbSDefinition, plant_dat) -> 
     return new_icnum, record.cpnm
 
 
+def _index_subbasin_hru_paths(txtinout_dir: Path, subbasin: int) -> dict[int, Path]:
+    """{Hru real del header: ruta .hru real} para toda una subcuenca.
+
+    El sufijo numérico del NOMBRE de archivo (``NNNNNMMMM.hru``) es la
+    posición LOCAL de esa HRU dentro de la subcuenca (1..cantidad de HRU de
+    esa subcuenca); el "Hru:" del HEADER (``hru_file.metadata.hru``, lo que
+    ``plan_area_allocation``/``plan_mass_area_allocation`` usan para armar
+    ``targets``) es en cambio el número GLOBAL de esa HRU en toda la cuenca
+    -- confirmado contra un modelo real (Buffalo, 2026-09-15): la
+    subcuenca 2 tiene archivos ``000020001..000020080`` cuyos headers dicen
+    ``Hru:88..167``. Reconstruir el nombre de archivo a partir del número
+    de header (lo que hacía esta función antes) solo funciona por
+    coincidencia en la subcuenca 1 (ahí el rango global empieza en 1, igual
+    que el local) -- en cualquier otra subcuenca apunta a un archivo que no
+    existe. Esta función resuelve la ruta real buscando, entre los
+    archivos reales de esa subcuenca, cuál tiene ese número en su header."""
+    index: dict[int, Path] = {}
+    for path in list_subbasin_hru_files(txtinout_dir, subbasin):
+        hru_file = parse_hru_file(path)
+        if hru_file.metadata.hru is not None:
+            index[hru_file.metadata.hru] = path
+    return index
+
+
 def _apply_to_one_hru(
-    txtinout_dir: Path,
+    hru_path: Path,
     subbasin: int,
     hru: int,
     nbs: NbSDefinition,
     plant_id: int,
 ) -> NbSApplyHRUResult:
-    stem = f"{subbasin:05d}{hru:04d}"
-    hru_path = txtinout_dir / f"{stem}.hru"
-    mgt_path = txtinout_dir / f"{stem}.mgt"
-    sol_path = txtinout_dir / f"{stem}.sol"
+    mgt_path = hru_path.with_suffix(".mgt")
+    sol_path = hru_path.with_suffix(".sol")
 
     if not hru_path.exists() or not mgt_path.exists():
         return NbSApplyHRUResult(subbasin, hru, "error", "Could not find the .hru/.mgt files for that HRU.")
@@ -384,9 +428,18 @@ def apply_nbs(
     plant_id, cpnm = _resolve_plant_id(txtinout_dir, nbs, plant_dat)
 
     report = NbSApplyReport(nbs_name=nbs.name, plant_id=plant_id, cpnm=cpnm)
+    # Índice de rutas reales por subcuenca, construido una sola vez por
+    # subcuenca (no por target) -- ver _index_subbasin_hru_paths sobre por
+    # qué no se puede reconstruir el nombre de archivo desde (subbasin, hru).
+    hru_paths_by_subbasin: dict[int, dict[int, Path]] = {}
     for subbasin, hru in targets:
         try:
-            result = _apply_to_one_hru(txtinout_dir, subbasin, hru, nbs, plant_id)
+            index = hru_paths_by_subbasin.setdefault(subbasin, _index_subbasin_hru_paths(txtinout_dir, subbasin))
+            hru_path = index.get(hru)
+            if hru_path is None:
+                result = NbSApplyHRUResult(subbasin, hru, "error", "Could not find the .hru/.mgt files for that HRU.")
+            else:
+                result = _apply_to_one_hru(hru_path, subbasin, hru, nbs, plant_id)
         except Exception as exc:  # noqa: BLE001 - se reporta y se sigue, un fallo puntual no aborta el lote
             result = NbSApplyHRUResult(subbasin, hru, "error", str(exc))
         report.results.append(result)
