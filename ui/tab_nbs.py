@@ -44,9 +44,11 @@ from scenarios.nbs_area_apply import (
 )
 from scenarios.nbs_mass_apply import (
     MassAreaAllocationResult,
+    RestorationCsvConversionResult,
     SubbasinAreaAllocation,
     parse_mass_allocation_csv,
     plan_mass_area_allocation,
+    write_mass_allocation_csv_from_restoration_inputs,
     write_mass_allocation_template_csv,
 )
 from swat_io.discovery import discover_subbasins
@@ -485,6 +487,13 @@ class NbSTab(ctk.CTkFrame):
             command=self._on_mass_load_csv_clicked, width=90,
         )
         self._mass_load_csv_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        self._mass_load_from_restoration_button = ctk.CTkButton(
+            csv_row, text=self._config.text("nbs_tab.mass_load_from_restoration_button"),
+            fg_color="transparent", border_width=1, border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"), hover_color=self._colors.get("window_bg"),
+            command=self._on_mass_load_from_restoration_clicked, width=170,
+        )
+        self._mass_load_from_restoration_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
 
         priority_help = ctk.CTkLabel(
             card, text=self._config.text("nbs_tab.mass_priority_help"),
@@ -1216,6 +1225,7 @@ class NbSTab(ctk.CTkFrame):
         state = "normal" if enabled else "disabled"
         self._mass_download_button.configure(state=state)
         self._mass_load_csv_button.configure(state=state)
+        self._mass_load_from_restoration_button.configure(state=state)
         if enabled:
             self._update_mass_apply_button_state()
         else:
@@ -1226,9 +1236,16 @@ class NbSTab(ctk.CTkFrame):
         path = filedialog.askopenfilename(filetypes=[("CSV", "*.csv")])
         if not path:
             return
+        self._load_mass_allocations_from_csv(Path(path))
 
+    def _load_mass_allocations_from_csv(self, path: Path, *, extra_log_lines: list[str] | None = None) -> None:
+        """Parsea ``path`` con parse_mass_allocation_csv y lo deja como el
+        CSV cargado actual -- compartido por "Load CSV" y por "Load from
+        Restoration Inputs..." (que primero escribe el CSV convertido y
+        después lo carga exactamente igual que si el usuario lo hubiera
+        elegido a mano)."""
         try:
-            allocations, errors = parse_mass_allocation_csv(Path(path))
+            allocations, errors = parse_mass_allocation_csv(path)
         except ValueError as error:
             self._mass_status_label.configure(
                 text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
@@ -1237,15 +1254,83 @@ class NbSTab(ctk.CTkFrame):
             return
 
         self._mass_allocations = allocations
-        self._mass_csv_field.set_value(path)
+        self._mass_csv_field.set_value(str(path))
         self._mass_status_label.configure(
             text=self._config.text("nbs_tab.mass_load_csv_success").format(count=len(allocations)),
             text_color=self._colors.get("success") if not errors else self._colors.get("warning"),
         )
-        self._set_mass_log(
-            "\n".join(self._config.text("nbs_tab.mass_load_csv_error_line").format(error=e) for e in errors)
+        log_lines = list(extra_log_lines or [])
+        log_lines.extend(
+            self._config.text("nbs_tab.mass_load_csv_error_line").format(error=e) for e in errors
         )
+        self._set_mass_log("\n".join(log_lines))
         self._update_mass_apply_button_state()
+
+    def _on_mass_load_from_restoration_clicked(self) -> None:
+        if self._project_dir is None:
+            return
+
+        name = self._mass_nbs_selector.get()
+        # Mismo criterio que _on_mass_download_template_clicked: releído de
+        # disco, no self._library.
+        definition = next((d for d in load_library(self._project_dir) if d.name == name), None)
+        if definition is None:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.no_nbs_selected_error"), text_color=self._colors.get("error")
+            )
+            return
+
+        source_path = filedialog.askopenfilename(
+            title=self._config.text("nbs_tab.mass_load_from_restoration_source_title"),
+            filetypes=[("CSV", "*.csv")],
+        )
+        if not source_path:
+            return
+        destination_path = filedialog.asksaveasfilename(
+            defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="nbs_mass_apply_from_restoration.csv",
+        )
+        if not destination_path:
+            return
+
+        project_dir = self._project_dir
+        target_lulc = definition.target_lulc
+        destination = Path(destination_path)
+
+        self._set_mass_controls_enabled(False)
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_converting_restoration_csv"),
+            text_color=self._colors.get("text_secondary"),
+        )
+        self._start_mass_progress()
+        self._on_run_state_changed(True)
+
+        def work(_report_progress):
+            return write_mass_allocation_csv_from_restoration_inputs(
+                project_dir / "TxtInOut", source_path, destination, target_lulc
+            )
+
+        def on_done(result: RestorationCsvConversionResult) -> None:
+            self._finish_mass_operation()
+            # _load_mass_allocations_from_csv deja el mensaje final en
+            # _mass_status_label ("Loaded N subbasin(s) from the CSV") --
+            # acá solo se agregan al log las subcuencas que esta conversión
+            # en particular omitió (ninguna cobertura del CSV de
+            # restauración tenía HRU real ahí), antes de las líneas de
+            # error que parse_mass_allocation_csv pueda agregar después.
+            log_lines = [
+                self._config.text("nbs_tab.mass_load_from_restoration_skipped_line").format(subbasin=subbasin, reason=reason)
+                for subbasin, reason in sorted(result.skipped.items())
+            ]
+            self._load_mass_allocations_from_csv(result.csv_path, extra_log_lines=log_lines)
+
+        def on_error(error: Exception) -> None:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+            self._finish_mass_operation()
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
 
     def _update_mass_apply_button_state(self) -> None:
         has_allocations = bool(self._mass_allocations)

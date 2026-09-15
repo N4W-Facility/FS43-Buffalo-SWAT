@@ -7,6 +7,7 @@ from scenarios.nbs_mass_apply import (
     SubbasinAreaAllocation,
     parse_mass_allocation_csv,
     plan_mass_area_allocation,
+    write_mass_allocation_csv_from_restoration_inputs,
     write_mass_allocation_template_csv,
 )
 from tests.helpers import write_synthetic_sub
@@ -258,3 +259,72 @@ def test_template_marks_applicable_cells_with_zero_and_the_rest_blank(txtinout_d
     row2 = df[df["subbasin"] == "2"].iloc[0]
     assert row1["FRST"] == "0"
     assert pd.isna(row2["FRST"])
+
+
+# -- write_mass_allocation_csv_from_restoration_inputs ---------------------------
+
+
+def test_redistributes_across_only_the_coverages_real_in_each_subbasin(txtinout_dir: Path):
+    # Subcuenca 1 tiene FRST y PAST reales (ver fixture); "141" es un código
+    # CDL sin mapear que el crosswalk de Restoration Inputs dejaría tal
+    # cual -- nunca es una cobertura real de ningún proyecto, así que debe
+    # descartarse y su 50% redistribuirse entre FRST/PAST.
+    restoration_csv = _write_csv(
+        txtinout_dir.parent, [{"subbasin": 1, "area_ha": 20.0, "FRST": 20, "PAST": 30, "141": 50}]
+    )
+    destination = txtinout_dir.parent / "converted.csv"
+
+    result = write_mass_allocation_csv_from_restoration_inputs(txtinout_dir, restoration_csv, destination, target_lulc="WETL")
+
+    assert result.subbasin_count == 1
+    assert result.skipped == {}
+    df = pd.read_csv(destination)
+    assert set(df.columns) == {"subbasin", "area_ha", "FRST", "PAST"}
+    row = df.iloc[0]
+    assert row["area_ha"] == 20.0  # el área objetivo no cambia, solo se reparte
+    assert row["FRST"] == 40.0  # 20/(20+30) * 100
+    assert row["PAST"] == 60.0  # 30/(20+30) * 100
+
+
+def test_filters_per_subbasin_not_globally(txtinout_dir: Path):
+    # Subcuenca 2 es 100% PAST (ver fixture) -- FRST no tiene ninguna HRU
+    # ahí, aunque sea una cobertura válida en la subcuenca 1.
+    restoration_csv = _write_csv(
+        txtinout_dir.parent, [{"subbasin": 2, "area_ha": 10.0, "FRST": 80, "PAST": 20}]
+    )
+    destination = txtinout_dir.parent / "converted.csv"
+
+    result = write_mass_allocation_csv_from_restoration_inputs(txtinout_dir, restoration_csv, destination, target_lulc="WETL")
+
+    df = pd.read_csv(destination)
+    assert set(df.columns) == {"subbasin", "area_ha", "PAST"}
+    assert df.iloc[0]["PAST"] == 100.0
+
+
+def test_target_lulc_is_excluded_as_its_own_source(txtinout_dir: Path):
+    restoration_csv = _write_csv(
+        txtinout_dir.parent, [{"subbasin": 1, "area_ha": 20.0, "FRST": 30, "PAST": 70}]
+    )
+    destination = txtinout_dir.parent / "converted.csv"
+
+    result = write_mass_allocation_csv_from_restoration_inputs(txtinout_dir, restoration_csv, destination, target_lulc="PAST")
+
+    df = pd.read_csv(destination)
+    assert set(df.columns) == {"subbasin", "area_ha", "FRST"}
+    assert df.iloc[0]["FRST"] == 100.0
+
+
+def test_subbasin_with_no_valid_coverage_is_skipped(txtinout_dir: Path):
+    # Subcuenca 2 no tiene FRST real -- si el CSV de restauración solo trae
+    # FRST para esa subcuenca, no queda nada para redistribuir.
+    restoration_csv = _write_csv(
+        txtinout_dir.parent, [{"subbasin": 2, "area_ha": 10.0, "FRST": 100}]
+    )
+    destination = txtinout_dir.parent / "converted.csv"
+
+    result = write_mass_allocation_csv_from_restoration_inputs(txtinout_dir, restoration_csv, destination, target_lulc="WETL")
+
+    assert result.subbasin_count == 0
+    assert 2 in result.skipped
+    df = pd.read_csv(destination)
+    assert df.empty

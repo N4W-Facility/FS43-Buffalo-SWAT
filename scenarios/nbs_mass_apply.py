@@ -49,6 +49,11 @@ en un único llamado a ``scenarios.nbs_apply.apply_nbs`` con los targets de
 todas juntas -- esa función ya soporta targets de más de una subcuenca (ver
 su docstring de write_apply_report_csv) y ya es todo-o-nada por HRU, así que
 no hace falta ninguna orquestación nueva del lado de escritura.
+
+``write_mass_allocation_csv_from_restoration_inputs`` (2026-09-14) convierte
+un CSV de la pestaña Restoration Inputs a este mismo formato, restringido a
+las coberturas que de verdad tienen HRU en cada subcuenca puntual -- ver su
+docstring.
 """
 from __future__ import annotations
 
@@ -263,6 +268,25 @@ def plan_mass_area_allocation(
     return result
 
 
+def _coverages_by_subbasin(txtinout_dir: Path, target_lulc: str) -> dict[int, set[str]]:
+    """Cobertura real (metadata.land_use) por subcuenca, según las HRU
+    reales del proyecto -- ``target_lulc`` (la cobertura objetivo de la NbS)
+    se excluye a propósito, nunca puede ser su propia fuente. Factorizado de
+    ``write_mass_allocation_template_csv`` para que
+    ``write_mass_allocation_csv_from_restoration_inputs`` use exactamente el
+    mismo criterio de "qué cobertura existe de verdad en esta subcuenca"."""
+    scan = parse_hru_directory(txtinout_dir)
+    coverages_by_subbasin: dict[int, set[str]] = {}
+    for hru_file in scan.files:
+        metadata = hru_file.metadata
+        if metadata.subbasin is None or metadata.land_use is None:
+            continue
+        if metadata.land_use == target_lulc:
+            continue
+        coverages_by_subbasin.setdefault(metadata.subbasin, set()).add(metadata.land_use)
+    return coverages_by_subbasin
+
+
 def write_mass_allocation_template_csv(
     txtinout_dir: str | Path, destination: str | Path, target_lulc: str
 ) -> Path:
@@ -285,18 +309,8 @@ def write_mass_allocation_template_csv(
     participa hasta que el usuario complete un área -- por eso los ceros de
     cobertura no necesitan sumar 100 de entrada."""
     txtinout_dir = Path(txtinout_dir)
-    scan = parse_hru_directory(txtinout_dir)
-
-    coverages_by_subbasin: dict[int, set[str]] = {}
-    all_coverages: set[str] = set()
-    for hru_file in scan.files:
-        metadata = hru_file.metadata
-        if metadata.subbasin is None or metadata.land_use is None:
-            continue
-        if metadata.land_use == target_lulc:
-            continue
-        coverages_by_subbasin.setdefault(metadata.subbasin, set()).add(metadata.land_use)
-        all_coverages.add(metadata.land_use)
+    coverages_by_subbasin = _coverages_by_subbasin(txtinout_dir, target_lulc)
+    all_coverages = {coverage for coverages in coverages_by_subbasin.values() for coverage in coverages}
 
     subbasins = sorted(s.subbasin_id for s in discover_subbasins(txtinout_dir))
     coverage_columns = sorted(all_coverages)
@@ -314,3 +328,93 @@ def write_mass_allocation_template_csv(
     destination.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(destination, index=False)
     return destination
+
+
+@dataclass
+class RestorationCsvConversionResult:
+    csv_path: Path
+    subbasin_count: int
+    # subcuenca -> motivo por el que se omitió (ninguna cobertura del CSV de
+    # restauración coincide con una cobertura real de esa subcuenca).
+    skipped: dict[int, str] = field(default_factory=dict)
+
+
+def write_mass_allocation_csv_from_restoration_inputs(
+    txtinout_dir: str | Path, restoration_csv_path: str | Path, destination: str | Path, target_lulc: str
+) -> RestorationCsvConversionResult:
+    """Convierte un CSV de la pestaña Restoration Inputs (mismo formato
+    matriz subcuenca/area_ha/cobertura, pero con % calculado del cruce
+    raster -- ver scenarios.nbs_raster_inputs) en un CSV de mass apply listo
+    para cargar acá, restringido a las coberturas que realmente tienen HRU
+    en esa subcuenca puntual.
+
+    Pedido explícito del usuario (2026-09-14): el cruce raster no sabe si
+    una cobertura mapeada por el crosswalk (ej. FRSD) tiene alguna HRU real
+    en la subcuenca puntual -- puede haber píxeles de esa cobertura dentro
+    del polígono sin que SWAT haya delineado ninguna HRU con ese uso ahí, o
+    la columna puede ser un código crudo sin mapear (ver
+    RestorationClassOutput.auto_labeled_codes) que nunca es una cobertura
+    real de ningún proyecto. Cargar ese CSV tal cual en "Apply an NbS by
+    area" dejaría esas columnas sin ninguna HRU que las respalde -- déficit
+    o, peor, una subcuenca entera omitida en modo estricto.
+
+    Cada fila se recalcula así: se descartan las columnas de cobertura que
+    no tienen ninguna HRU real en esa subcuenca (mismo criterio que
+    ``_coverages_by_subbasin``, que ya excluye ``target_lulc`` como fuente)
+    y el % restante se reescala proporcionalmente para volver a sumar 100 --
+    el ``area_ha`` objetivo de la subcuenca no cambia, solo se reparte entre
+    las coberturas que sí existen ahí (decisión explícita del usuario:
+    "redistribute proportionally", no reducir el área objetivo). Una
+    subcuenca sin ninguna cobertura válida en el CSV queda afuera del
+    resultado (``skipped``), no aborta el resto."""
+    txtinout_dir = Path(txtinout_dir)
+    coverages_by_subbasin = _coverages_by_subbasin(txtinout_dir, target_lulc)
+
+    try:
+        df = pd.read_csv(restoration_csv_path)
+    except Exception as error:
+        raise ValueError(f"Could not read the file: {error}") from None
+
+    if _SUBBASIN_COLUMN not in df.columns or _AREA_COLUMN not in df.columns:
+        raise ValueError(f"Missing required column '{_SUBBASIN_COLUMN}'/'{_AREA_COLUMN}'.")
+    source_coverage_columns = [c for c in df.columns if c not in (_SUBBASIN_COLUMN, _AREA_COLUMN)]
+
+    result = RestorationCsvConversionResult(csv_path=Path(destination), subbasin_count=0)
+    rows = []
+    used_coverage_columns: set[str] = set()
+
+    for _, row in df.iterrows():
+        subbasin_id = int(row[_SUBBASIN_COLUMN])
+        area_ha = float(row[_AREA_COLUMN])
+        valid_coverages = coverages_by_subbasin.get(subbasin_id, set())
+
+        kept: list[tuple[str, float]] = []
+        for coverage in source_coverage_columns:
+            if coverage not in valid_coverages:
+                continue
+            pct = float(row[coverage])
+            if pct > 0:
+                kept.append((coverage, pct))
+
+        kept_total = sum(pct for _, pct in kept)
+        if kept_total <= 0:
+            result.skipped[subbasin_id] = (
+                "None of the coverages in the restoration CSV for this subbasin have a real HRU here."
+            )
+            continue
+
+        scale = 100.0 / kept_total
+        new_row = {_SUBBASIN_COLUMN: subbasin_id, _AREA_COLUMN: area_ha}
+        for coverage, pct in kept:
+            new_row[coverage] = round(pct * scale, 4)
+            used_coverage_columns.add(coverage)
+        rows.append(new_row)
+
+    coverage_columns = sorted(used_coverage_columns)
+    df_out = pd.DataFrame(rows, columns=[_SUBBASIN_COLUMN, _AREA_COLUMN] + coverage_columns)
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    df_out.to_csv(destination, index=False)
+
+    result.subbasin_count = len(rows)
+    return result

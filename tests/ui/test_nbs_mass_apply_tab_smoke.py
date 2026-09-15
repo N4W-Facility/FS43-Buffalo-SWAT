@@ -146,6 +146,33 @@ def test_mass_load_csv_enables_preview_and_apply_buttons(hidden_root, config, pr
     assert tab._mass_apply_button.cget("state") == "normal"
 
 
+def test_mass_load_from_restoration_inputs_keeps_only_real_coverages(hidden_root, config, project, monkeypatch) -> None:
+    """Ambas subcuencas del fixture solo tienen AGRL real (ver _HRU_TEMPLATE).
+    Un CSV de Restoration Inputs con una columna PAST (que no existe en
+    ningún lado del proyecto) debe quedar descartada y su % redistribuido
+    sobre AGRL -- confirma que el botón nuevo convierte y carga en un solo
+    paso, igual que "Load CSV" pero pasando antes por
+    write_mass_allocation_csv_from_restoration_inputs."""
+    add_or_replace(project, _nbs_definition())
+    _install_synchronous_mocks(monkeypatch)
+
+    tab = NbSTab(hidden_root, config)
+    tab.set_project(project)
+    tab._mass_nbs_selector.current(0)
+
+    restoration_csv = project / "restoration.csv"
+    pd.DataFrame([{"subbasin": 1, "area_ha": 10.0, "AGRL": 60, "PAST": 40}]).to_csv(restoration_csv, index=False)
+    converted_csv = project / "converted.csv"
+    monkeypatch.setattr("ui.tab_nbs.filedialog.askopenfilename", lambda **_kw: str(restoration_csv))
+    monkeypatch.setattr("ui.tab_nbs.filedialog.asksaveasfilename", lambda **_kw: str(converted_csv))
+
+    tab._on_mass_load_from_restoration_clicked()
+
+    assert tab._mass_allocations == {1: SubbasinAreaAllocation(area_ha=10.0, sources=[("AGRL", 100.0)])}
+    assert tab._mass_csv_field._value.cget("text") == str(converted_csv)
+    assert tab._mass_apply_button.cget("state") == "normal"
+
+
 def test_mass_plan_computes_independent_plan_per_subbasin(hidden_root, config, project, monkeypatch) -> None:
     add_or_replace(project, _nbs_definition())
     _install_synchronous_mocks(monkeypatch)
