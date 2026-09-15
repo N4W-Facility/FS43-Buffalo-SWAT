@@ -139,6 +139,33 @@ def test_scan_populates_restoration_classes_and_crosswalk_rows(hidden_root, conf
     assert tab._compute_button.cget("state") == "normal"
 
 
+def test_scan_auto_matches_codes_present_in_the_cdl_profile_and_project(hidden_root, config, project: Path, monkeypatch) -> None:
+    """El raster fixture usa el código 1 (== CDL "Corn") en la subcuenca 1
+    y el código 2 (== CDL "Cotton", sin equivalente SWAT en el perfil) en
+    la subcuenca 2. Sobre un proyecto cuya única cobertura real es CORN,
+    el selector del código 1 debe quedar preseleccionado en CORN
+    (auto-matched); el del código 2 debe quedar en "(use code)" porque el
+    perfil no tiene sugerencia para Cotton."""
+    _install_synchronous_run_in_background(monkeypatch)
+
+    (project / "TxtInOut" / "000010001.hru").write_text(
+        _HRU.replace("Luse:AGRL", "Luse:CORN"), encoding="utf-8"
+    )
+    tab = RestorationInputsTab(hidden_root, config, on_run_state_changed=lambda _running: None)
+    metadata = ProjectMetadata(
+        subbasin_shp_path=str(project / "subs.shp"),
+        land_cover_raster_path=str(project / "land_cover.tif"),
+        restoration_raster_path=str(project / "restoration.tif"),
+    )
+    tab.set_project(project, metadata)
+
+    tab._on_scan_clicked()
+
+    auto_label = config.text("restoration_inputs_tab.crosswalk_auto_option")
+    assert tab._crosswalk_selectors[1].get() == "CORN"
+    assert tab._crosswalk_selectors[2].get() == auto_label
+
+
 def test_compute_writes_csv_and_enables_open_folder(hidden_root, config, project: Path, monkeypatch) -> None:
     _install_synchronous_run_in_background(monkeypatch)
 

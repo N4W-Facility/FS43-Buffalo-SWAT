@@ -11,6 +11,16 @@ Toda la geometría/CRS/lectura de raster vive en raster_io/ (sin
 dependencias de UI); este módulo solo agrega el cruce CDL->CPNM (elegido
 por el usuario contra las coberturas reales del proyecto abierto, nunca
 adivinado) y el formato de salida.
+
+El cruce puede pre-poblarse desde un perfil de referencia (ej.
+resources/land_cover_crosswalks/cdl.csv, ver ``suggest_crosswalk``) --
+pedido explícito del usuario, 2026-09-14: la lista de códigos CDL es larga
+y en su mayoría no ambigua (Corn->CORN, Soybeans->SOYB, etc.), así que
+completar el cruce a mano código por código para eso era trabajo
+repetitivo. La sugerencia solo se aplica cuando el CPNM del perfil existe
+de verdad en las coberturas del proyecto abierto -- nunca inventa una
+cobertura -- y el usuario puede corregir cualquier fila antes de Compute,
+igual que antes.
 """
 from __future__ import annotations
 
@@ -34,6 +44,7 @@ from swat_io.tool_outputs import tool_outputs_dir
 _BACKGROUND_RESTORATION_CLASS = 0
 _OUTPUT_SUBDIR = "restoration_inputs"
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_CROSSWALK_PROFILES_DIR = Path(__file__).resolve().parent.parent / "resources" / "land_cover_crosswalks"
 # Mismo criterio que scenarios.nbs_mass_apply: 0.5 de tolerancia en la
 # suma de % por fila -- el redondeo a 4 decimales de un área real nunca la
 # excede.
@@ -108,6 +119,44 @@ def scan_restoration_inputs(
         if value != _BACKGROUND_RESTORATION_CLASS
     ]
     return RestorationScanResult(grid=grid, land_cover_codes=land_cover_codes, restoration_classes=restoration_classes)
+
+
+def list_crosswalk_profiles() -> list[str]:
+    """Perfiles de cruce disponibles (nombre de archivo sin extensión) en
+    resources/land_cover_crosswalks/ -- agregar soporte para otro dataset
+    de cobertura (ej. un land cover nacional distinto de CDL) es copiar un
+    CSV nuevo ahí (columnas code,name,swat_cpnm), sin tocar código."""
+    if not _CROSSWALK_PROFILES_DIR.is_dir():
+        return []
+    return sorted(p.stem for p in _CROSSWALK_PROFILES_DIR.glob("*.csv"))
+
+
+def load_crosswalk_profile(name: str) -> dict[int, str]:
+    """Código de raster -> CPNM sugerido según el perfil ``name`` (ej.
+    "cdl"). Filas con ``swat_cpnm`` vacío (clases sin equivalente SWAT
+    claro, ej. cultivos exóticos o "Developed" sin nivel de intensidad) se
+    omiten a propósito -- ese código queda sin sugerencia, igual que si no
+    apareciera en el archivo."""
+    path = _CROSSWALK_PROFILES_DIR / f"{name}.csv"
+    df = pd.read_csv(path, dtype={"code": int}, keep_default_na=False)
+    return {int(row["code"]): row["swat_cpnm"] for _, row in df.iterrows() if row["swat_cpnm"]}
+
+
+def suggest_crosswalk(
+    land_cover_codes: list[LandCoverCode], profile: dict[int, str], project_coverages: list[str]
+) -> dict[int, str]:
+    """Sugerencia automática de cruce: un código se pre-mapea solo si el
+    perfil tiene un CPNM para él Y ese CPNM existe de verdad entre las
+    coberturas reales del proyecto abierto -- nunca se sugiere una
+    cobertura que el proyecto no tiene, mismo criterio de "nunca adivinar"
+    que ya regía el cruce manual (ver CoverageCrosswalk). El usuario sigue
+    pudiendo corregir cualquier sugerencia antes de Compute."""
+    coverages = set(project_coverages)
+    return {
+        land_cover_code.code: profile[land_cover_code.code]
+        for land_cover_code in land_cover_codes
+        if profile.get(land_cover_code.code) in coverages
+    }
 
 
 def discover_project_coverages(project_dir: str | Path) -> list[str]:

@@ -35,7 +35,10 @@ from scenarios.nbs_raster_inputs import (
     RestorationScanResult,
     compute_restoration_area_csvs,
     discover_project_coverages,
+    list_crosswalk_profiles,
+    load_crosswalk_profile,
     scan_restoration_inputs,
+    suggest_crosswalk,
 )
 from scenarios.project import ProjectMetadata, save_project, validate_raster_path
 from swat_io.tool_outputs import tool_outputs_dir
@@ -58,6 +61,7 @@ class RestorationInputsTab(ctk.CTkFrame):
         self._scan_result: RestorationScanResult | None = None
         self._project_coverages: list[str] = []
         self._crosswalk_selectors: dict[int, ttk.Combobox] = {}
+        self._crosswalk_profiles: list[str] = list_crosswalk_profiles()
 
         self._disabled_state = self._build_disabled_state()
         self._enabled_state = self._build_enabled_state()
@@ -192,8 +196,23 @@ class RestorationInputsTab(ctk.CTkFrame):
         crosswalk_hint.grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 4))
         bind_responsive_wraplength(crosswalk_hint)
 
+        profile_row = ctk.CTkFrame(card, fg_color="transparent")
+        profile_row.grid(row=7, column=0, sticky="w", padx=16, pady=(0, 8))
+        ctk.CTkLabel(
+            profile_row, text=self._config.text("restoration_inputs_tab.crosswalk_profile_label"),
+            text_color=self._colors.get("text_primary"),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self._crosswalk_profile_selector = ttk.Combobox(
+            profile_row, style=style_combobox(self._config), state="readonly",
+            values=self._crosswalk_profiles, width=20,
+        )
+        if self._crosswalk_profiles:
+            self._crosswalk_profile_selector.set(self._crosswalk_profiles[0])
+        self._crosswalk_profile_selector.grid(row=0, column=1, sticky="w")
+        self._crosswalk_profile_selector.bind("<<ComboboxSelected>>", self._on_crosswalk_profile_changed)
+
         self._crosswalk_container = ctk.CTkScrollableFrame(card, fg_color=self._colors.get("surface"), height=220)
-        self._crosswalk_container.grid(row=7, column=0, sticky="ew", padx=16, pady=(0, 16))
+        self._crosswalk_container.grid(row=8, column=0, sticky="ew", padx=16, pady=(0, 16))
         self._crosswalk_container.columnconfigure(1, weight=1)
 
     def _build_compute_card(self, parent: ctk.CTkFrame, *, row: int) -> None:
@@ -390,10 +409,17 @@ class RestorationInputsTab(ctk.CTkFrame):
         # propósito, no como default.
         display_values = [auto_label, skip_label, *coverages]
 
+        suggested = self._suggested_crosswalk(land_cover_codes, coverages)
+
         for row_index, land_cover_code in enumerate(land_cover_codes):
+            label_key = (
+                "restoration_inputs_tab.crosswalk_row_label_auto"
+                if land_cover_code.code in suggested
+                else "restoration_inputs_tab.crosswalk_row_label"
+            )
             label = ctk.CTkLabel(
                 self._crosswalk_container,
-                text=self._config.text("restoration_inputs_tab.crosswalk_row_label").format(
+                text=self._config.text(label_key).format(
                     code=land_cover_code.code, pixels=f"{land_cover_code.approx_pixel_count:,}"
                 ),
                 text_color=self._colors.get("text_primary"), anchor="w",
@@ -401,9 +427,21 @@ class RestorationInputsTab(ctk.CTkFrame):
             label.grid(row=row_index, column=0, sticky="w", padx=(4, 8), pady=2)
 
             selector = ttk.Combobox(self._crosswalk_container, style=style, state="readonly", values=display_values, width=30)
-            selector.set(auto_label)
+            selector.set(suggested.get(land_cover_code.code, auto_label))
             selector.grid(row=row_index, column=1, sticky="w", pady=2)
             self._crosswalk_selectors[land_cover_code.code] = selector
+
+    def _suggested_crosswalk(self, land_cover_codes, coverages: list[str]) -> dict[int, str]:
+        profile_name = self._crosswalk_profile_selector.get()
+        if not profile_name:
+            return {}
+        profile = load_crosswalk_profile(profile_name)
+        return suggest_crosswalk(land_cover_codes, profile, coverages)
+
+    def _on_crosswalk_profile_changed(self, _event=None) -> None:
+        if self._scan_result is None:
+            return
+        self._render_crosswalk_rows(self._scan_result.land_cover_codes, self._project_coverages)
 
     def _current_crosswalk(self) -> dict[int, str | None]:
         auto_label = self._config.text("restoration_inputs_tab.crosswalk_auto_option")

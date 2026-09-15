@@ -16,9 +16,13 @@ from rasterio.transform import from_origin
 
 from scenarios.nbs_mass_apply import parse_mass_allocation_csv
 from scenarios.nbs_raster_inputs import (
+    LandCoverCode,
     compute_restoration_area_csvs,
     discover_project_coverages,
+    list_crosswalk_profiles,
+    load_crosswalk_profile,
     scan_restoration_inputs,
+    suggest_crosswalk,
 )
 
 _CRS = CRS.from_epsg(32617)
@@ -156,3 +160,34 @@ def test_compute_with_explicit_skip_excludes_that_code(tmp_path: Path) -> None:
     assert allocations[2].area_ha == 0.5
     assert allocations[2].sources == [("2", 100.0)]
     assert output.excluded_ha_by_subbasin[2] == 0.5
+
+
+def test_list_crosswalk_profiles_finds_cdl() -> None:
+    assert "cdl" in list_crosswalk_profiles()
+
+
+def test_load_crosswalk_profile_reads_unambiguous_cdl_codes() -> None:
+    profile = load_crosswalk_profile("cdl")
+
+    assert profile[1] == "CORN"
+    assert profile[5] == "SOYB"
+    # Clases sin equivalente SWAT claro (ej. "Developed" sin nivel de
+    # intensidad) se omiten a propósito -- nunca aparecen en el dict.
+    assert 82 not in profile
+    assert 0 not in profile
+
+
+def test_suggest_crosswalk_only_when_project_actually_has_the_coverage() -> None:
+    profile = {1: "CORN", 2: "PAST"}
+    land_cover_codes = [
+        LandCoverCode(code=1, approx_pixel_count=10),
+        LandCoverCode(code=2, approx_pixel_count=10),
+        LandCoverCode(code=3, approx_pixel_count=10),
+    ]
+
+    # El proyecto solo tiene CORN de verdad -- PAST del perfil no se
+    # sugiere aunque el código 2 esté mapeado ahí, y el código 3 (ausente
+    # del perfil) tampoco.
+    suggested = suggest_crosswalk(land_cover_codes, profile, ["CORN"])
+
+    assert suggested == {1: "CORN"}
