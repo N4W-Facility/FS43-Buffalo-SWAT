@@ -22,6 +22,7 @@ import pytest
 from config.settings import AppPaths, ConfigManager
 from scenarios.nbs import NbSDefinition, add_or_replace
 from scenarios.nbs_mass_apply import SubbasinAreaAllocation
+from scenarios.project import ProjectMetadata
 from swat_io.hru.parser import parse_hru_file
 from ui.tab_batch import BatchTab
 
@@ -157,7 +158,7 @@ def test_run_button_disabled_until_destination_csv_and_nbs_are_set(
     config.paths = AppPaths(swat_executable=swat_executable)
 
     tab = BatchTab(hidden_root, config)
-    tab.set_project(project)
+    tab.set_project(project, ProjectMetadata())
     assert tab._nbs_batch_run_button.cget("state") == "disabled"
 
     tab._nbs_batch_destination_dir = project.parent / "batch_out"
@@ -182,7 +183,7 @@ def test_full_series_run_writes_independent_scenarios(
     config.paths = AppPaths(swat_executable=swat_executable)
 
     tab = BatchTab(hidden_root, config)
-    tab.set_project(project)
+    tab.set_project(project, ProjectMetadata())
 
     destination_dir = project.parent / "batch_out"
     tab._nbs_batch_destination_dir = destination_dir
@@ -229,7 +230,7 @@ def test_land_cover_batch_passes_unchecked_output_options_through(
     monkeypatch.setattr(tab_batch_module, "run_land_cover_batch", fake_run_land_cover_batch)
 
     tab = BatchTab(hidden_root, config)
-    tab.set_project(project)
+    tab.set_project(project, ProjectMetadata())
     tab._destination_dir = project.parent / "land_cover_out"
     tab._batch_config = LandCoverBatchConfig(
         target_lulc="FRST", target_pct_series=[10.0], donor_priority=["AGRL"],

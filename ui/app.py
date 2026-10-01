@@ -103,7 +103,7 @@ class App(ctk.CTk):
         self._tab_bar.set_enabled("hru_results", True)
         self._hru_results_tab.set_project(project_dir)
         self._tab_bar.set_enabled("batch", True)
-        self._batch_tab.set_project(project_dir)
+        self._batch_tab.set_project(project_dir, metadata)
         self._tab_bar.set_enabled("nbs", True)
         self._nbs_tab.set_project(project_dir)
         self._tab_bar.set_enabled("restoration_inputs", True)

@@ -51,6 +51,7 @@ from scenarios.nbs import NbSDefinition, load_library
 from scenarios.nbs_area_apply import parse_priority_text
 from scenarios.nbs_area_batch import OutputOrganizeOptions, parse_pct_series_text
 from scenarios.nbs_mass_apply import SubbasinAreaAllocation, parse_mass_allocation_csv, write_mass_allocation_template_csv
+from scenarios.project import ProjectMetadata
 
 from .dialog_confirm import ConfirmDialog
 from .scenario_comparison_window import ScenarioComparisonWindow
@@ -73,6 +74,7 @@ class BatchTab(ctk.CTkFrame):
         self._on_run_state_changed = on_run_state_changed
 
         self._project_dir: Path | None = None
+        self._metadata: ProjectMetadata = ProjectMetadata()
         self._destination_dir: Path | None = None
         self._batch_config: LandCoverBatchConfig | None = None
 
@@ -433,8 +435,9 @@ class BatchTab(ctk.CTkFrame):
 
     # -- estado del proyecto ---------------------------------------------
 
-    def set_project(self, project_dir: Path) -> None:
+    def set_project(self, project_dir: Path, metadata: ProjectMetadata) -> None:
         self._project_dir = project_dir
+        self._metadata = metadata
         self._destination_dir = None
         self._batch_config = None
         self._enabled_state.pack(fill="both", expand=True)
@@ -501,10 +504,16 @@ class BatchTab(ctk.CTkFrame):
         os.startfile(self._destination_dir)  # solo Windows: target de distribución del proyecto
 
     def _on_compare_clicked(self) -> None:
-        ScenarioComparisonWindow(self, self._config, initial_batch_dir=self._destination_dir)
+        ScenarioComparisonWindow(
+            self, self._config, initial_batch_dir=self._destination_dir,
+            subbasin_shp_path=self._metadata.subbasin_shp_path,
+        )
 
     def _on_nbs_batch_compare_clicked(self) -> None:
-        ScenarioComparisonWindow(self, self._config, initial_batch_dir=self._nbs_batch_destination_dir)
+        ScenarioComparisonWindow(
+            self, self._config, initial_batch_dir=self._nbs_batch_destination_dir,
+            subbasin_shp_path=self._metadata.subbasin_shp_path,
+        )
 
     # -- configuración CSV ---------------------------------------------------
 

@@ -351,6 +351,8 @@
   "scenario_comparison_window.source_hru": "HRU (output.hru)",
   "scenario_comparison_window.rch_variables_label": "Variables to export (all reaches in the basin)",
   "scenario_comparison_window.sub_variables_label": "Variables to export (all subbasins in the basin)",
+  "scenario_comparison_window.sub_shapefile_hint": "Also writes a subbasin shapefile (sub_summary.shp) with one attribute field per variable/scenario (averaged over the full time series) -- see sub_summary_legend.csv for which field is which, since DBF field names are limited to 10 characters.",
+  "scenario_comparison_window.sub_shapefile_not_configured_hint": "No subbasin shapefile is configured in the Project tab -- only the CSV files below will be written. Set it there to also get a sub_summary.shp with the averaged results as attributes.",
   "scenario_comparison_window.hru_mode_label": "HRU selection",
   "scenario_comparison_window.hru_mode_point": "Single HRU",
   "scenario_comparison_window.hru_mode_group": "Group by cover / slope / soil",

@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 from config.settings import ConfigManager
+from scenarios.project import ProjectMetadata
 from swat_io.hru_output_parser import _TABLE, hru_output_db_path
 from swat_io.rch_parser import RCH_VARIABLE_COLUMNS, export_rch_timeseries_csvs, rch_timeseries_dir
 from ui.scenario_comparison_window import ScenarioComparisonWindow
@@ -90,7 +91,7 @@ def hidden_root():
 
 def test_batch_tab_builds_and_sets_project(hidden_root, config):
     tab = BatchTab(hidden_root, config)
-    tab.set_project(Path("C:/fake_project"))
+    tab.set_project(Path("C:/fake_project"), ProjectMetadata())
 
 
 def test_hru_results_tab_builds_without_project(hidden_root, config):

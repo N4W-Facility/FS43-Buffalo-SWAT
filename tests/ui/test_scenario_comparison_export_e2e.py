@@ -16,10 +16,12 @@ from pathlib import Path
 import customtkinter as ctk
 import pandas as pd
 import pytest
+import shapefile
 
 from config.settings import ConfigManager
 from swat_io.hru_output_parser import _TABLE, hru_output_db_path
 from swat_io.rch_parser import RCH_VARIABLE_COLUMNS, export_rch_timeseries_csvs, rch_timeseries_dir
+from swat_io.sub_output_parser import SUB_VARIABLE_COLUMNS, export_sub_timeseries_csvs, sub_timeseries_dir
 from ui.scenario_comparison_window import ScenarioComparisonWindow
 
 
@@ -109,6 +111,61 @@ def test_scenario_comparison_window_exports_rch_and_hru_group_end_to_end(tmp_pat
         result = pd.read_csv(hru_csv)
         assert result["scenario_10pct"].tolist() == pytest.approx([100.0])
         assert result["scenario_20pct"].tolist() == pytest.approx([90.0])
+
+        window.destroy()
+    finally:
+        root.destroy()
+
+
+def _write_subbasin_shapefile(path: Path) -> Path:
+    writer = shapefile.Writer(str(path), shapeType=shapefile.POLYGON)
+    writer.field("GRIDCODE", "N", 10)
+    writer.poly([[(500000.0, 4500000.0), (500100.0, 4500000.0), (500100.0, 4500100.0), (500000.0, 4500100.0), (500000.0, 4500000.0)]])
+    writer.record(GRIDCODE=1)
+    writer.close()
+    return path
+
+
+def test_scenario_comparison_window_sub_export_also_writes_summary_shapefile(tmp_path):
+    batch_dir = tmp_path / "batch"
+    for name, precip in (("scenario_10pct", 5.0), ("scenario_20pct", 9.0)):
+        scenario_dir = batch_dir / name
+        (scenario_dir / "TxtInOut").mkdir(parents=True)
+        rows = [{"date": "2017-01-01", "sub": 1, "PRECIP": precip}]
+        columns = ["date", "sub"] + SUB_VARIABLE_COLUMNS
+        df = pd.DataFrame(rows)
+        for col in columns:
+            if col not in df.columns:
+                df[col] = 0.0
+        df["date"] = pd.to_datetime(df["date"])
+        export_sub_timeseries_csvs(df[columns], sub_timeseries_dir(scenario_dir))
+
+    shp_path = _write_subbasin_shapefile(tmp_path / "subs.shp")
+
+    config = ConfigManager()
+    config.load_all()
+    root = ctk.CTk()
+    root.withdraw()
+    try:
+        window = ScenarioComparisonWindow(
+            root, config, initial_batch_dir=batch_dir, subbasin_shp_path=str(shp_path)
+        )
+
+        window._source_selector.set(config.text("scenario_comparison_window.source_sub"))
+        window._refresh_source_panels()
+        window._sub_checklist.set_selected({"PRECIP"})
+        window._on_export_clicked()
+        _pump(root, lambda: "Wrote" in window._status_label.cget("text"))
+
+        shp_out = batch_dir / "comparison_exports" / "sub_summary.shp"
+        legend_csv = batch_dir / "comparison_exports" / "sub_summary_legend.csv"
+        assert shp_out.is_file()
+        assert legend_csv.is_file()
+
+        reader = shapefile.Reader(str(shp_out))
+        records = {rec["GRIDCODE"]: rec for rec in reader.records()}
+        assert records[1]["PRECIP_1"] == pytest.approx(5.0)
+        assert records[1]["PRECIP_2"] == pytest.approx(9.0)
 
         window.destroy()
     finally:

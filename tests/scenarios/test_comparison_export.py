@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import shapefile
 
 from scenarios.comparison_export import (
     ComparisonExportError,
@@ -15,6 +16,7 @@ from scenarios.comparison_export import (
     export_rch_comparison,
     export_rch_summary,
     export_sub_comparison,
+    export_sub_summary_shapefile,
     load_hru_variable_aggregation,
     scenario_label,
 )
@@ -57,6 +59,17 @@ def _write_sub_fixture(scenario_dir: Path, rows: list[dict]) -> None:
             df[col] = 0.0
     df["date"] = pd.to_datetime(df["date"])
     export_sub_timeseries_csvs(df[columns], sub_timeseries_dir(scenario_dir))
+
+
+def _write_subbasin_shapefile(path: Path, gridcodes: list[int]) -> Path:
+    writer = shapefile.Writer(str(path), shapeType=shapefile.POLYGON)
+    writer.field("GRIDCODE", "N", 10)
+    for i, code in enumerate(gridcodes):
+        x0 = 500000.0 + i * 100.0
+        writer.poly([[(x0, 4500000.0), (x0 + 100.0, 4500000.0), (x0 + 100.0, 4500100.0), (x0, 4500100.0), (x0, 4500000.0)]])
+        writer.record(GRIDCODE=code)
+    writer.close()
+    return path
 
 
 def _write_hru_db(scenario_dir: Path, rows: list[dict]) -> Path:
@@ -260,6 +273,95 @@ def test_export_sub_comparison_raises_without_organized_output(tmp_path: Path):
 
     with pytest.raises(ComparisonExportError):
         export_sub_comparison(tmp_path, ["PRECIP"])
+
+
+# -- SUB summary shapefile ---------------------------------------------------
+
+
+def test_export_sub_summary_shapefile_writes_averaged_fields_and_legend(tmp_path: Path):
+    s10 = _make_scenario(tmp_path, "scenario_10pct")
+    s20 = _make_scenario(tmp_path, "scenario_20pct")
+
+    _write_sub_fixture(
+        s10,
+        [
+            {"date": "2017-01-01", "sub": 1, "PRECIP": 4.0, "SURQ": 1.0},
+            {"date": "2017-01-02", "sub": 1, "PRECIP": 6.0, "SURQ": 3.0},
+            {"date": "2017-01-01", "sub": 2, "PRECIP": 10.0, "SURQ": 2.0},
+        ],
+    )
+    _write_sub_fixture(
+        s20,
+        [
+            {"date": "2017-01-01", "sub": 1, "PRECIP": 8.0, "SURQ": 0.0},
+            {"date": "2017-01-01", "sub": 2, "PRECIP": 20.0, "SURQ": 4.0},
+        ],
+    )
+    shp_path = _write_subbasin_shapefile(tmp_path / "subs.shp", [1, 2])
+
+    written = export_sub_summary_shapefile(tmp_path, shp_path, ["PRECIP", "SURQ"])
+
+    shp_out = next(p for p in written if p.suffix == ".shp")
+    legend_path = next(p for p in written if p.name == "sub_summary_legend.csv")
+
+    legend = pd.read_csv(legend_path)
+    assert list(legend.columns) == ["field", "variable", "scenario"]
+    assert legend.to_dict("records") == [
+        {"field": "PRECIP_1", "variable": "PRECIP", "scenario": "scenario_10pct"},
+        {"field": "PRECIP_2", "variable": "PRECIP", "scenario": "scenario_20pct"},
+        {"field": "SURQ_1", "variable": "SURQ", "scenario": "scenario_10pct"},
+        {"field": "SURQ_2", "variable": "SURQ", "scenario": "scenario_20pct"},
+    ]
+
+    reader = shapefile.Reader(str(shp_out))
+    field_names = [f[0] for f in reader.fields[1:]]
+    assert field_names == ["GRIDCODE", "PRECIP_1", "PRECIP_2", "SURQ_1", "SURQ_2"]
+
+    records = {rec["GRIDCODE"]: rec for rec in reader.records()}
+    assert records[1]["PRECIP_1"] == pytest.approx(5.0)  # promedio de PRECIP (4,6) en scenario_10pct, sub 1
+    assert records[1]["PRECIP_2"] == pytest.approx(8.0)
+    assert records[2]["SURQ_1"] == pytest.approx(2.0)
+    assert records[2]["SURQ_2"] == pytest.approx(4.0)
+    assert reader.numRecords == 2
+
+
+def test_export_sub_summary_shapefile_copies_the_prj_sidecar(tmp_path: Path):
+    s10 = _make_scenario(tmp_path, "scenario_10pct")
+    _write_sub_fixture(s10, [{"date": "2017-01-01", "sub": 1, "PRECIP": 5.0}])
+    shp_path = _write_subbasin_shapefile(tmp_path / "subs.shp", [1])
+    shp_path.with_suffix(".prj").write_text("FAKE_WKT", encoding="utf-8")
+
+    written = export_sub_summary_shapefile(tmp_path, shp_path, ["PRECIP"])
+
+    prj_out = next(p for p in written if p.suffix == ".prj")
+    assert prj_out.read_text(encoding="utf-8") == "FAKE_WKT"
+
+
+def test_export_sub_summary_shapefile_raises_when_shapefile_missing(tmp_path: Path):
+    _make_scenario(tmp_path, "scenario_10pct")
+    _write_sub_fixture(tmp_path / "scenario_10pct", [{"date": "2017-01-01", "sub": 1, "PRECIP": 5.0}])
+
+    with pytest.raises(ComparisonExportError):
+        export_sub_summary_shapefile(tmp_path, tmp_path / "does_not_exist.shp", ["PRECIP"])
+
+
+def test_export_sub_summary_shapefile_raises_without_scenarios(tmp_path: Path):
+    shp_path = _write_subbasin_shapefile(tmp_path / "subs.shp", [1])
+    with pytest.raises(ComparisonExportError):
+        export_sub_summary_shapefile(tmp_path, shp_path, ["PRECIP"])
+
+
+def test_export_sub_summary_shapefile_rejects_field_name_over_dbf_limit(tmp_path: Path):
+    # "SURQ" no es el nombre real -- este test solo confirma el guard de
+    # longitud en sí (variable + "_" + índice > 10 caracteres), sin
+    # necesidad de fabricar cientos de escenarios reales para llegar a un
+    # índice de varios dígitos.
+    s10 = _make_scenario(tmp_path, "scenario_10pct")
+    _write_sub_fixture(s10, [{"date": "2017-01-01", "sub": 1, "PRECIP": 1.0}])
+    shp_path = _write_subbasin_shapefile(tmp_path / "subs.shp", [1])
+
+    with pytest.raises(ComparisonExportError, match="10-character"):
+        export_sub_summary_shapefile(tmp_path, shp_path, ["A_VERY_LONG_VARIABLE"])
 
 
 # -- HRU puntual ------------------------------------------------------------

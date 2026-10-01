@@ -37,6 +37,7 @@ from scenarios.comparison_export import (
     export_rch_comparison,
     export_rch_summary,
     export_sub_comparison,
+    export_sub_summary_shapefile,
 )
 from swat_io.hru_output_parser import HRU_OUTPUT_VARIABLE_COLUMNS
 from swat_io.rch_parser import RCH_VARIABLE_COLUMNS
@@ -65,11 +66,18 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
         config: ConfigManager,
         *,
         initial_batch_dir: Path | None = None,
+        subbasin_shp_path: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(master, **kwargs)
         self._config = config
         self._colors = palette(config)
+        # Configurado en la pestaña Project del proyecto abierto -- usado
+        # solo por el modo SUB para también escribir un shapefile resumen
+        # (ver export_sub_summary_shapefile). None si el usuario no lo
+        # configuró todavía: el modo SUB sigue funcionando igual (CSV),
+        # simplemente sin el shapefile adicional.
+        self._subbasin_shp_path = subbasin_shp_path
 
         self._batch_dir: Path | None = None
         self._scenario_dirs: list[Path] = []
@@ -204,6 +212,17 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
         self._sub_checklist = VariableChecklist(panel, config, sub_options, height=_CHECKLIST_HEIGHT_LARGE)
         self._sub_checklist.pack(fill="x")
         self._add_select_all_clear(panel, self._sub_checklist)
+
+        shapefile_hint_key = (
+            "scenario_comparison_window.sub_shapefile_hint"
+            if self._subbasin_shp_path
+            else "scenario_comparison_window.sub_shapefile_not_configured_hint"
+        )
+        shapefile_hint = ctk.CTkLabel(
+            panel, text=config.text(shapefile_hint_key), text_color=colors.get("text_secondary"),
+            anchor="w", justify="left", wraplength=560,
+        )
+        shapefile_hint.pack(anchor="w", pady=(8, 0), fill="x")
 
         return panel
 
@@ -521,7 +540,19 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
             if not variables:
                 self._set_status(config.text("scenario_comparison_window.no_variables_hint"), error=True)
                 return
-            self._run_export(lambda: export_sub_comparison(self._batch_dir, variables))
+
+            def work() -> list[Path]:
+                written = export_sub_comparison(self._batch_dir, variables)
+                # Shapefile resumen (pedido explícito del usuario,
+                # 2026-10-01): solo si el proyecto abierto tiene un
+                # shapefile de subcuencas configurado (pestaña Project) --
+                # si no, el modo SUB sigue funcionando igual, solo sin el
+                # shapefile adicional, en vez de bloquear el export de CSV.
+                if self._subbasin_shp_path:
+                    written.extend(export_sub_summary_shapefile(self._batch_dir, self._subbasin_shp_path, variables))
+                return written
+
+            self._run_export(work)
             return
 
         variables = self._hru_checklist.selected()

@@ -28,7 +28,13 @@ espacial que no se colapsa a un único punto:
   reach/variable/escenario de un vistazo sin abrir los CSV largos.
 - SUB: mismo criterio que RCH pero sobre output.sub -- siempre todas las
   subcuencas de la cuenca, sin agregación -- columnas date, sub,
-  <escenario...>.
+  <escenario...>. ``export_sub_summary_shapefile`` (2026-10-01, pedido
+  explícito del usuario) complementa este modo escribiendo un shapefile de
+  subcuencas (la misma geometría del .shp configurado en Project) con un
+  campo numérico por (variable, escenario) -- el promedio de toda la
+  serie de tiempo -- para poder simbolizar los resultados en un SIG;
+  ``sub_summary_legend.csv`` documenta qué variable/escenario representa
+  cada campo (los nombres de campo DBF están limitados a 10 caracteres).
 - HRU puntual: un único HRU -- columnas date, <escenario...>.
 - HRU agrupado (cobertura/pendiente/suelo, ej. "todas las HRU de bosque"):
   agrega las HRU del grupo con `sum` o `weighted_mean` (ponderado por la
@@ -354,6 +360,108 @@ def export_sub_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
 
     if not written:
         raise ComparisonExportError("None of the chosen variables have data in the scenarios found.")
+    return written
+
+
+def export_sub_summary_shapefile(
+    batch_dir: Path | str, subbasin_shp_path: str | Path, variables: list[str], dest_dir: Path | str | None = None
+) -> list[Path]:
+    """Escribe un shapefile de subcuencas (misma geometría que el .shp
+    configurado en Project) con un campo numérico por (variable, escenario)
+    -- el promedio de esa variable en toda la serie de tiempo de ese
+    escenario -- pedido explícito del usuario, 2026-10-01, para poder
+    simbolizar los resultados directamente en un SIG en vez de solo tener
+    los CSV de export_sub_comparison.
+
+    Los nombres de campo DBF están limitados a 10 caracteres -- cada campo
+    se llama ``<VARIABLE>_<n>`` (nombre real de la variable + índice de
+    escenario 1-based en el orden descubierto; pedido explícito del
+    usuario, 2026-10-01, revisado sobre la v1 que usaba ``V<n>S<m>``:
+    quería el código de la variable visible en el propio nombre del campo,
+    no solo en la leyenda). El nombre completo del escenario no entra en
+    10 caracteres junto al de la variable (los nombres de carpeta de
+    escenario son arbitrarios) -- ``sub_summary_legend.csv``, escrito
+    junto al shapefile, documenta a qué escenario real corresponde cada
+    índice. Ninguna de las 25 variables de SUB_VARIABLE_COLUMNS supera los
+    7 caracteres, así que ``<VARIABLE>_<n>`` entra en 10 incluso con
+    índices de dos dígitos (ej. "SNOMELT_10"); si algún día una variable
+    más larga más un índice de tres dígitos no entrara, se levanta
+    ComparisonExportError en vez de truncar en silencio (truncar podría
+    hacer que dos campos distintos queden con el mismo nombre)."""
+    scenario_dirs = discover_scenario_dirs(batch_dir)
+    if not scenario_dirs:
+        raise ComparisonExportError("No scenario (folder with TxtInOut/) was found in the batch folder.")
+    if not variables:
+        raise ComparisonExportError("No variable was chosen to export.")
+
+    import shapefile
+
+    from viz.shapefile_reader import SUBBASIN_ID_FIELD, ShapefileReadError, read_subbasin_shapes
+
+    shp_path = Path(subbasin_shp_path)
+    try:
+        records = read_subbasin_shapes(shp_path)
+    except ShapefileReadError as error:
+        raise ComparisonExportError(str(error)) from None
+
+    dest_dir = Path(dest_dir) if dest_dir is not None else comparison_exports_dir(batch_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    frames: dict[str, pd.DataFrame] = {}
+    for scenario_dir in scenario_dirs:
+        df = read_sub_timeseries_dir(sub_timeseries_dir(scenario_dir))
+        if not df.empty:
+            frames[scenario_label(scenario_dir)] = df
+    if not frames:
+        raise ComparisonExportError("No scenario has output.sub organized yet (\"Organize .sub\" button).")
+
+    scenario_labels = list(frames.keys())
+    means_by_field: dict[str, dict[int, float]] = {}
+    field_rows: list[dict[str, str]] = []
+    seen_fields: set[str] = set()
+    for variable in variables:
+        for s_idx, label in enumerate(scenario_labels, start=1):
+            field_name = f"{variable}_{s_idx}"
+            if len(field_name) > 10:
+                raise ComparisonExportError(
+                    f"Field name '{field_name}' is longer than the 10-character DBF limit -- "
+                    f"cannot write a shapefile field for variable '{variable}', scenario #{s_idx} ('{label}')."
+                )
+            if field_name in seen_fields:
+                raise ComparisonExportError(f"Duplicate shapefile field name '{field_name}'.")
+            seen_fields.add(field_name)
+
+            df = frames[label]
+            means_by_field[field_name] = (
+                df.groupby("sub")[variable].mean().to_dict() if variable in df.columns else {}
+            )
+            field_rows.append({"field": field_name, "variable": variable, "scenario": label})
+
+    source_reader = shapefile.Reader(str(shp_path))
+    shp_out = dest_dir / "sub_summary.shp"
+    writer = shapefile.Writer(str(shp_out), shapeType=source_reader.shapeType)
+    writer.field(SUBBASIN_ID_FIELD, "N", 10)
+    for row in field_rows:
+        writer.field(row["field"], "F", 19, 6)
+
+    for record in records:
+        writer.poly(record.rings)
+        values = [means_by_field[row["field"]].get(record.id_value) for row in field_rows]
+        writer.record(record.id_value, *values)
+    writer.close()
+
+    written = [shp_out, shp_out.with_suffix(".shx"), shp_out.with_suffix(".dbf")]
+
+    prj_source = shp_path.with_suffix(".prj")
+    if prj_source.is_file():
+        prj_out = shp_out.with_suffix(".prj")
+        prj_out.write_text(prj_source.read_text(encoding="utf-8"), encoding="utf-8")
+        written.append(prj_out)
+
+    legend_path = dest_dir / "sub_summary_legend.csv"
+    pd.DataFrame(field_rows, columns=["field", "variable", "scenario"]).to_csv(legend_path, index=False)
+    written.append(legend_path)
+
     return written
 
 
