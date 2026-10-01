@@ -86,6 +86,15 @@ def test_scenario_comparison_window_exports_rch_and_hru_group_end_to_end(tmp_pat
         assert result["scenario_10pct"].tolist() == pytest.approx([5.0])
         assert result["scenario_20pct"].tolist() == pytest.approx([4.0])
 
+        # RCH export también escribe un resumen (promedio por reach,
+        # columnas variable x escenario) -- pedido explícito del usuario,
+        # 2026-09-30.
+        summary_csv = batch_dir / "comparison_exports" / "rch_summary.csv"
+        assert summary_csv.is_file()
+        summary = pd.read_csv(summary_csv).set_index("reach")
+        assert summary.loc[1, "FLOW_OUT (scenario_10pct)"] == pytest.approx(5.0)
+        assert summary.loc[1, "FLOW_OUT (scenario_20pct)"] == pytest.approx(4.0)
+
         window._source_selector.set(config.text("scenario_comparison_window.source_hru"))
         window._refresh_source_panels()
         window._hru_mode_selector.set(config.text("scenario_comparison_window.hru_mode_group"))

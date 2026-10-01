@@ -35,6 +35,7 @@ from scenarios.comparison_export import (
     export_hru_group_comparison,
     export_hru_point_comparison,
     export_rch_comparison,
+    export_rch_summary,
     export_sub_comparison,
 )
 from swat_io.hru_output_parser import HRU_OUTPUT_VARIABLE_COLUMNS
@@ -506,7 +507,13 @@ class ScenarioComparisonWindow(ctk.CTkToplevel):
             if not variables:
                 self._set_status(config.text("scenario_comparison_window.no_variables_hint"), error=True)
                 return
-            self._run_export(lambda: export_rch_comparison(self._batch_dir, variables))
+
+            def work() -> list[Path]:
+                written = export_rch_comparison(self._batch_dir, variables)
+                written.append(export_rch_summary(self._batch_dir, variables))
+                return written
+
+            self._run_export(work)
             return
 
         if source_key == _SOURCE_SUB:

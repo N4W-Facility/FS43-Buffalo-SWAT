@@ -21,7 +21,11 @@ espacial que no se colapsa a un único punto:
 
 - RCH: siempre incluye todos los reach de la cuenca (un reach ya es su
   propia unidad espacial, sin agregación) -- columnas date, reach,
-  <escenario...>.
+  <escenario...>. ``export_rch_summary`` (2026-09-30, pedido explícito del
+  usuario) complementa este modo con un único CSV adicional "wide" en
+  variable Y escenario a la vez (reach, <variable> (<escenario>)...),
+  promediando cada variable en toda la serie de tiempo -- para comparar
+  reach/variable/escenario de un vistazo sin abrir los CSV largos.
 - SUB: mismo criterio que RCH pero sobre output.sub -- siempre todas las
   subcuencas de la cuenca, sin agregación -- columnas date, sub,
   <escenario...>.
@@ -259,6 +263,54 @@ def export_rch_comparison(batch_dir: Path | str, variables: list[str], dest_dir:
     if not written:
         raise ComparisonExportError("None of the chosen variables have data in the scenarios found.")
     return written
+
+
+def export_rch_summary(batch_dir: Path | str, variables: list[str], dest_dir: Path | str | None = None) -> Path:
+    """Un único CSV (reach, <variable> (<escenario>)...) con el PROMEDIO de
+    cada variable en toda la serie de tiempo de cada escenario -- pedido
+    explícito del usuario, 2026-09-30, para ver de un vistazo cómo cambia
+    cada reach/variable entre escenarios, sin abrir los CSV largos (uno por
+    variable, una fila por fecha) que ya escribe export_rch_comparison.
+
+    Columnas agrupadas por variable, con una columna por escenario dentro
+    de cada grupo (en ese orden) -- los escenarios quedan lado a lado
+    dentro de cada variable, que es el eje que se quiere comparar."""
+    scenario_dirs = discover_scenario_dirs(batch_dir)
+    if not scenario_dirs:
+        raise ComparisonExportError("No scenario (folder with TxtInOut/) was found in the batch folder.")
+    if not variables:
+        raise ComparisonExportError("No variable was chosen to export.")
+
+    dest_dir = Path(dest_dir) if dest_dir is not None else comparison_exports_dir(batch_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    frames: dict[str, pd.DataFrame] = {}
+    for scenario_dir in scenario_dirs:
+        df = read_rch_timeseries_dir(rch_timeseries_dir(scenario_dir))
+        if not df.empty:
+            frames[scenario_label(scenario_dir)] = df
+
+    if not frames:
+        raise ComparisonExportError("No scenario has output.rch organized yet (\"Organize .rch\" button).")
+
+    all_reaches: set[int] = set()
+    for df in frames.values():
+        all_reaches.update(df["reach"].unique().tolist())
+    reaches = sorted(all_reaches)
+
+    summary = pd.DataFrame({"reach": reaches})
+    for variable in variables:
+        for label, df in frames.items():
+            column = f"{variable} ({label})"
+            if variable not in df.columns:
+                summary[column] = pd.NA
+                continue
+            means = df.groupby("reach")[variable].mean()
+            summary[column] = summary["reach"].map(means)
+
+    path = dest_dir / "rch_summary.csv"
+    summary.to_csv(path, index=False)
+    return path
 
 
 # -- exportación SUB: todas las subcuencas de la cuenca, por variable --------

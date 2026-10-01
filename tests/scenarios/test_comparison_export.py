@@ -13,6 +13,7 @@ from scenarios.comparison_export import (
     export_hru_group_comparison,
     export_hru_point_comparison,
     export_rch_comparison,
+    export_rch_summary,
     export_sub_comparison,
     load_hru_variable_aggregation,
     scenario_label,
@@ -156,6 +157,65 @@ def test_export_rch_comparison_raises_without_organized_output(tmp_path: Path):
 
     with pytest.raises(ComparisonExportError):
         export_rch_comparison(tmp_path, ["FLOW_OUT"])
+
+
+# -- RCH summary (promedio por reach, variable x escenario) ---------------------
+
+
+def test_export_rch_summary_averages_each_variable_over_the_full_series(tmp_path: Path):
+    s10 = _make_scenario(tmp_path, "scenario_10pct")
+    s20 = _make_scenario(tmp_path, "scenario_20pct")
+
+    _write_rch_fixture(
+        s10,
+        [
+            {"date": "2017-01-01", "reach": 1, "FLOW_OUT": 4.0, "SED_OUT": 1.0},
+            {"date": "2017-01-02", "reach": 1, "FLOW_OUT": 6.0, "SED_OUT": 3.0},
+            {"date": "2017-01-01", "reach": 2, "FLOW_OUT": 10.0, "SED_OUT": 2.0},
+        ],
+    )
+    _write_rch_fixture(
+        s20,
+        [
+            {"date": "2017-01-01", "reach": 1, "FLOW_OUT": 8.0, "SED_OUT": 0.0},
+            {"date": "2017-01-01", "reach": 2, "FLOW_OUT": 20.0, "SED_OUT": 4.0},
+        ],
+    )
+
+    path = export_rch_summary(tmp_path, ["FLOW_OUT", "SED_OUT"])
+
+    df = pd.read_csv(path).set_index("reach")
+    # Columnas agrupadas por variable, escenarios lado a lado dentro de
+    # cada una -- mismo orden que la tabla pedida por el usuario.
+    assert list(df.columns) == [
+        "FLOW_OUT (scenario_10pct)", "FLOW_OUT (scenario_20pct)",
+        "SED_OUT (scenario_10pct)", "SED_OUT (scenario_20pct)",
+    ]
+    # Reach 1, scenario_10pct: promedio de FLOW_OUT entre dos fechas (4,6).
+    assert df.loc[1, "FLOW_OUT (scenario_10pct)"] == pytest.approx(5.0)
+    assert df.loc[1, "FLOW_OUT (scenario_20pct)"] == pytest.approx(8.0)
+    assert df.loc[2, "SED_OUT (scenario_10pct)"] == pytest.approx(2.0)
+    assert df.loc[2, "SED_OUT (scenario_20pct)"] == pytest.approx(4.0)
+
+
+def test_export_rch_summary_blank_when_a_scenario_lacks_a_reach(tmp_path: Path):
+    s10 = _make_scenario(tmp_path, "scenario_10pct")
+    s20 = _make_scenario(tmp_path, "scenario_20pct")
+
+    _write_rch_fixture(s10, [{"date": "2017-01-01", "reach": 1, "FLOW_OUT": 5.0}])
+    _write_rch_fixture(s20, [{"date": "2017-01-01", "reach": 2, "FLOW_OUT": 9.0}])
+
+    path = export_rch_summary(tmp_path, ["FLOW_OUT"])
+
+    df = pd.read_csv(path).set_index("reach")
+    assert df.loc[1, "FLOW_OUT (scenario_10pct)"] == pytest.approx(5.0)
+    assert pd.isna(df.loc[1, "FLOW_OUT (scenario_20pct)"])
+    assert pd.isna(df.loc[2, "FLOW_OUT (scenario_10pct)"])
+
+
+def test_export_rch_summary_raises_without_scenarios(tmp_path: Path):
+    with pytest.raises(ComparisonExportError):
+        export_rch_summary(tmp_path, ["FLOW_OUT"])
 
 
 # -- SUB comparison ---------------------------------------------------------
