@@ -102,6 +102,18 @@ class NbSDefinition:
     operations: list[NbSOperation] = field(default_factory=list)
 
     description: str = ""
+    # "restoration" (default) o "degradation" -- pedido explícito del
+    # usuario, 2026-09-28, dirección corregida 2026-09-30: decide qué
+    # archivo maestro de prioridad de intervención usa "Apply by area" con
+    # orden de prioridad (resources/lulc_intervention_priority/
+    # restoration.csv o degradation.csv, dos listas independientes, ver
+    # scenarios.nbs_area_apply.load_intervention_priority) al elegir de qué
+    # cobertura fuente convertir primero: "restoration" arranca por las
+    # coberturas MÁS DEGRADADAS (ej. urbano/pastura) -- restaurar significa
+    # convertir suelo degradado, no talar bosque sano; "degradation"
+    # arranca por las de MEJOR CALIDAD (ej. humedales/bosque) -- eso es lo
+    # que se pierde en una degradación real.
+    intent: str = "restoration"
 
     def to_dict(self) -> dict:
         return {
@@ -113,6 +125,7 @@ class NbSDefinition:
             "cn2_by_hsg": dict(self.cn2_by_hsg),
             "operations": [op.to_dict() for op in self.operations],
             "description": self.description,
+            "intent": self.intent,
         }
 
     @staticmethod
@@ -127,6 +140,10 @@ class NbSDefinition:
             cn2_by_hsg=dict(data.get("cn2_by_hsg", {})),
             operations=[NbSOperation.from_dict(op) for op in data.get("operations", [])],
             description=data.get("description", ""),
+            # Ausente en cualquier nbs_library.json guardado antes de este
+            # campo -- "restoration" preserva el comportamiento de siempre
+            # (nada usaba el orden de prioridad todavía).
+            intent=data.get("intent", "restoration"),
         )
 
 

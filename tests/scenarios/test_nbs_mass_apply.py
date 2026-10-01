@@ -5,8 +5,11 @@ import pytest
 
 from scenarios.nbs_mass_apply import (
     SubbasinAreaAllocation,
+    parse_area_only_csv,
     parse_mass_allocation_csv,
     plan_mass_area_allocation,
+    plan_mass_area_allocation_by_priority,
+    write_area_only_template_csv,
     write_mass_allocation_csv_from_restoration_inputs,
     write_mass_allocation_template_csv,
 )
@@ -328,3 +331,95 @@ def test_subbasin_with_no_valid_coverage_is_skipped(txtinout_dir: Path):
     assert 2 in result.skipped
     df = pd.read_csv(destination)
     assert df.empty
+
+
+# -- modo por orden de prioridad --------------------------------------------------
+
+
+def test_parse_area_only_csv_reads_subbasin_and_area(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": 50.0}, {"subbasin": 2, "area_ha": 10.0}])
+
+    areas, errors = parse_area_only_csv(csv_path)
+
+    assert errors == []
+    assert areas == {1: 50.0, 2: 10.0}
+
+
+def test_parse_area_only_csv_reports_non_numeric_area_and_skips_row(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1, "area_ha": "abc"}])
+
+    areas, errors = parse_area_only_csv(csv_path)
+
+    assert areas == {}
+    assert any("abc" in e for e in errors)
+
+
+def test_parse_area_only_csv_requires_subbasin_and_area_columns(tmp_path: Path):
+    csv_path = _write_csv(tmp_path, [{"subbasin": 1}])
+    with pytest.raises(ValueError, match="area_ha"):
+        parse_area_only_csv(csv_path)
+
+
+def test_plan_mass_area_allocation_by_priority_filters_per_subbasin(txtinout_dir: Path):
+    # Subcuenca 1: FRST (50 ha) + PAST (950 ha); subcuenca 2: solo PAST
+    # (500 ha) -- ver fixture txtinout_dir. Un único coverage_priority
+    # global ["FRST", "PAST"] se filtra a lo que cada subcuenca tiene de
+    # verdad.
+    areas = {1: 60.0, 2: 20.0}
+
+    result = plan_mass_area_allocation_by_priority(
+        txtinout_dir.parent, areas, coverage_priority=["FRST", "PAST"], target_lulc="WETL",
+    )
+
+    assert result.skipped == {}
+    plans_by_subbasin = {p.subbasin: p for p in result.plans}
+    by_lulc_1 = {r.source_lulc: r for r in plans_by_subbasin[1].by_source}
+    assert by_lulc_1["FRST"].selected_ha == 50.0  # agota FRST entera (única HRU, 5% de 1000 ha)
+    # PAST es una única HRU de 950 ha -- no se puede partir, así que cubre
+    # de sobra los 10 ha restantes tomando la HRU entera (mismo criterio de
+    # "nunca partir una HRU" que el modo por %).
+    assert by_lulc_1["PAST"].selected_ha == 950.0
+    # Subcuenca 2 no tiene FRST -- solo aparece PAST en su plan. Es una
+    # única HRU de 500 ha (toda la subcuenca), así que cubre de sobra los
+    # 20 ha pedidos tomando la HRU entera.
+    assert [r.source_lulc for r in plans_by_subbasin[2].by_source] == ["PAST"]
+    assert plans_by_subbasin[2].by_source[0].selected_ha == 500.0
+
+
+def test_plan_mass_area_allocation_by_priority_follows_given_order_as_is(txtinout_dir: Path):
+    # plan_mass_area_allocation_by_priority ya no decide restoration vs.
+    # degradation -- eso lo resuelve el llamador (ver
+    # scenarios.nbs_area_apply.load_intervention_priority, dos archivos
+    # independientes) antes de pasarle coverage_priority. Acá solo se
+    # confirma que respeta el orden tal cual se lo dan, sin invertirlo.
+    areas = {1: 10.0}
+
+    result = plan_mass_area_allocation_by_priority(
+        txtinout_dir.parent, areas, coverage_priority=["PAST", "FRST"], target_lulc="WETL",
+    )
+
+    assert result.plans[0].by_source[0].source_lulc == "PAST"
+
+
+def test_plan_mass_area_allocation_by_priority_skips_subbasin_over_available_area(txtinout_dir: Path):
+    # Subcuenca 2 tiene 500 ha reales en total (ver fixture) -- pedir 600
+    # ha con strict=True (default) omite la subcuenca entera.
+    areas = {2: 600.0}
+
+    result = plan_mass_area_allocation_by_priority(
+        txtinout_dir.parent, areas, coverage_priority=["PAST"], target_lulc="WETL",
+    )
+
+    assert result.plans == []
+    assert 2 in result.skipped
+
+
+def test_write_area_only_template_csv_has_no_coverage_columns(txtinout_dir: Path):
+    destination = txtinout_dir.parent / "template.csv"
+
+    write_area_only_template_csv(txtinout_dir, destination)
+    df = pd.read_csv(destination, dtype=str)
+
+    assert list(df.columns) == ["subbasin", "area_ha"]
+    assert list(df["subbasin"]) == ["1", "2"]
+    assert df["area_ha"].isna().all()

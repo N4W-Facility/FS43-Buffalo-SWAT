@@ -30,6 +30,28 @@ def test_load_library_empty_when_no_file(tmp_path: Path) -> None:
     assert load_library(tmp_path) == []
 
 
+def test_intent_defaults_to_restoration() -> None:
+    assert _sample_definition().intent == "restoration"
+
+
+def test_intent_round_trips_through_to_dict_from_dict() -> None:
+    definition = _sample_definition()
+    definition.intent = "degradation"
+
+    restored = NbSDefinition.from_dict(definition.to_dict())
+
+    assert restored.intent == "degradation"
+
+
+def test_intent_defaults_to_restoration_when_absent_from_old_json() -> None:
+    data = _sample_definition().to_dict()
+    del data["intent"]  # nbs_library.json guardado antes de que este campo existiera
+
+    restored = NbSDefinition.from_dict(data)
+
+    assert restored.intent == "restoration"
+
+
 def test_save_and_load_round_trip(tmp_path: Path) -> None:
     definition = _sample_definition()
     save_library(tmp_path, [definition])

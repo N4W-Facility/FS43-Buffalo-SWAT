@@ -67,7 +67,13 @@ from swat_io.hru.scanner import parse_hru_directory
 from swat_io.sub_parser import parse_sub_file
 
 from .hru_draft import load_subbasin_hru_files
-from .nbs_area_apply import AreaAllocationPlan, plan_area_allocation
+from .nbs_area_apply import (
+    AreaAllocationPlan,
+    effective_source_priority,
+    plan_area_allocation,
+    plan_area_allocation_by_priority,
+    subbasin_land_uses,
+)
 
 _SUBBASIN_COLUMN = "subbasin"
 _AREA_COLUMN = "area_ha"
@@ -266,6 +272,141 @@ def plan_mass_area_allocation(
         result.plans.append(plan)
 
     return result
+
+
+# -- modo por orden de prioridad entre coberturas (2026-09-28) -------------------
+
+
+def parse_area_only_csv(csv_path: str | Path) -> tuple[dict[int, float], list[str]]:
+    """Versión simplificada de parse_mass_allocation_csv para el modo por
+    orden de prioridad: solo ``subbasin``/``area_ha``, sin columnas de
+    cobertura -- el usuario no necesita saber de antemano qué coberturas
+    existen en cada subcuenca, eso lo resuelve
+    ``plan_mass_area_allocation_by_priority`` por su cuenta contra las HRU
+    reales de cada una. Mismo criterio tolerante que parse_mass_allocation_csv:
+    un problema puntual por fila se reporta en ``errors`` y esa fila se
+    omite, sin abortar el resto del CSV."""
+    try:
+        df = pd.read_csv(csv_path, dtype=str)
+    except Exception as error:
+        raise ValueError(f"Could not read the file: {error}") from None
+
+    if _SUBBASIN_COLUMN not in df.columns:
+        raise ValueError(f"Missing required column '{_SUBBASIN_COLUMN}'.")
+    if _AREA_COLUMN not in df.columns:
+        raise ValueError(f"Missing required column '{_AREA_COLUMN}'.")
+
+    areas: dict[int, float] = {}
+    errors: list[str] = []
+    seen: set[int] = set()
+
+    for _, row in df.iterrows():
+        raw_subbasin = row[_SUBBASIN_COLUMN]
+        if _is_blank(raw_subbasin):
+            continue
+        try:
+            subbasin = int(float(str(raw_subbasin).strip()))
+        except ValueError:
+            errors.append(f"'{raw_subbasin}' is not a valid subbasin number.")
+            continue
+        if subbasin in seen:
+            errors.append(f"Subbasin {subbasin}: appears more than once in the CSV; the repeated row was ignored.")
+            continue
+        seen.add(subbasin)
+
+        raw_area = row[_AREA_COLUMN]
+        if _is_blank(raw_area):
+            continue
+        try:
+            area_ha = float(raw_area)
+        except ValueError:
+            errors.append(f"Subbasin {subbasin}: area '{raw_area}' is not a valid number.")
+            continue
+        if area_ha <= 0:
+            errors.append(f"Subbasin {subbasin}: the area ({_AREA_COLUMN}) must be greater than 0.")
+            continue
+
+        areas[subbasin] = area_ha
+
+    return areas, errors
+
+
+def plan_mass_area_allocation_by_priority(
+    project_dir: str | Path,
+    area_by_subbasin: dict[int, float],
+    coverage_priority: list[str],
+    *,
+    target_lulc: str,
+    slope_priority: list[str] | None = None,
+    soil_priority: list[str] | None = None,
+    strict: bool = True,
+) -> MassAreaAllocationResult:
+    """Equivalente por orden de prioridad de plan_mass_area_allocation: un
+    solo ``coverage_priority`` (ya resuelto por el llamador contra el
+    archivo maestro correcto -- ver
+    scenarios.nbs_area_apply.load_intervention_priority, que ya elige
+    restoration.csv/degradation.csv según el intent de la NbS) para todo
+    el batch -- pedido explícito del usuario: mismo criterio que
+    slope_priority/soil_priority hoy, una sola configuración compartida,
+    no una por subcuenca. Se filtra a las coberturas reales de CADA
+    subcuenca puntual (nunca a nivel de todo el proyecto) antes de llamar
+    a plan_area_allocation_by_priority, así que una subcuenca sin alguna de
+    las coberturas de la lista simplemente no la usa, sin error."""
+    txtinout_dir = Path(project_dir) / "TxtInOut"
+    sub_by_id = {s.subbasin_id: s for s in discover_subbasins(txtinout_dir)}
+
+    result = MassAreaAllocationResult()
+    for subbasin_id, area_ha in area_by_subbasin.items():
+        entry = sub_by_id.get(subbasin_id)
+        if entry is None:
+            result.skipped[subbasin_id] = "That subbasin was not found in the project (.sub/.pnd not located)."
+            continue
+
+        hru_files = load_subbasin_hru_files(txtinout_dir, subbasin_id)
+        if not hru_files:
+            result.skipped[subbasin_id] = "The subbasin has no HRUs."
+            continue
+
+        real_land_uses = set(subbasin_land_uses(hru_files))
+        priority_here = effective_source_priority(coverage_priority, real_land_uses, target_lulc)
+
+        subbasin_area_ha = parse_sub_file(entry.sub_file, subbasin_id).area_km2 * 100
+        plan = plan_area_allocation_by_priority(
+            subbasin_id, hru_files, subbasin_area_ha,
+            total_area_ha=area_ha,
+            coverage_priority=priority_here,
+            slope_priority=slope_priority,
+            soil_priority=soil_priority,
+        )
+
+        if strict and plan.total_deficit_ha > _AREA_DEFICIT_TOLERANCE:
+            achievable_ha = sum(source.selected_ha for source in plan.by_source)
+            breakdown = "; ".join(
+                f"{source.source_lulc}: {source.selected_ha:.2f} ha available" for source in plan.by_source
+            )
+            result.skipped[subbasin_id] = (
+                f"The requested NbS area ({area_ha:.2f} ha) exceeds the area available among this subbasin's "
+                f"real coverages in the priority order ({achievable_ha:.2f} ha total -- {breakdown}). Lower "
+                f"'area_ha' to {achievable_ha:.2f} ha or less."
+            )
+            continue
+
+        result.plans.append(plan)
+
+    return result
+
+
+def write_area_only_template_csv(txtinout_dir: str | Path, destination: str | Path) -> Path:
+    """Template para el modo por orden de prioridad: una fila por
+    subcuenca real, ``area_ha`` en blanco -- sin columnas de cobertura,
+    porque en este modo el usuario no elige coberturas fuente, solo el
+    área objetivo por subcuenca."""
+    subbasins = sorted(s.subbasin_id for s in discover_subbasins(Path(txtinout_dir)))
+    df = pd.DataFrame({_SUBBASIN_COLUMN: subbasins, _AREA_COLUMN: [""] * len(subbasins)})
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(destination, index=False)
+    return destination
 
 
 def _coverages_by_subbasin(txtinout_dir: Path, target_lulc: str) -> dict[int, set[str]]:
