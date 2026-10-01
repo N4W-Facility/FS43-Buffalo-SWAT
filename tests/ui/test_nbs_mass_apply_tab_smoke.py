@@ -173,6 +173,40 @@ def test_mass_load_from_restoration_inputs_keeps_only_real_coverages(hidden_root
     assert tab._mass_apply_button.cget("state") == "normal"
 
 
+def test_mass_priority_mode_prefills_order_and_computes_plan(hidden_root, config, project, monkeypatch) -> None:
+    add_or_replace(project, _nbs_definition())
+    _install_synchronous_mocks(monkeypatch)
+
+    tab = NbSTab(hidden_root, config)
+    tab.set_project(project)
+    tab._mass_nbs_selector.current(0)
+
+    tab._mass_mode_var.set("priority")
+    tab._on_mass_mode_changed()
+
+    # AGRL es la única cobertura real de ambas subcuencas (ver fixture) --
+    # el campo global se pre-llena solo contra la primera subcuenca real.
+    assert tab._mass_coverage_priority_entry.get() == "AGRL"
+    assert tab._mass_load_from_restoration_button.cget("state") == "disabled"
+
+    areas_csv = project / "areas.csv"
+    pd.DataFrame([{"subbasin": 1, "area_ha": 100}, {"subbasin": 2, "area_ha": 100}]).to_csv(areas_csv, index=False)
+    monkeypatch.setattr("ui.tab_nbs.filedialog.askopenfilename", lambda **_kw: str(areas_csv))
+    tab._on_mass_load_csv_clicked()
+
+    assert tab._mass_areas_by_subbasin == {1: 100.0, 2: 100.0}
+    assert tab._mass_apply_button.cget("state") == "normal"
+
+    captured = []
+    tab._run_mass_plan(lambda definition, result: captured.append((definition, result)))
+
+    assert captured
+    _definition, result = captured[0]
+    assert result.skipped == {}
+    assert {p.subbasin for p in result.plans} == {1, 2}
+    assert all(p.by_source[0].source_lulc == "AGRL" for p in result.plans)
+
+
 def test_mass_plan_computes_independent_plan_per_subbasin(hidden_root, config, project, monkeypatch) -> None:
     add_or_replace(project, _nbs_definition())
     _install_synchronous_mocks(monkeypatch)
@@ -216,6 +250,16 @@ def test_mass_apply_writes_real_hru_mgt_files_across_subbasins(hidden_root, conf
         hru_file = parse_hru_file(project / "TxtInOut" / f"{sub_id:05d}0001.hru")
         assert hru_file.metadata.land_use == "FRST"
         assert hru_file.get_value("CANMX") == 3.0
+
+    # Resumen por cobertura LULC (pedido explícito del usuario, 2026-09-30):
+    # ambas subcuencas son 100 ha con una única HRU AGRL (HRU_FR=1.0) --
+    # 200 ha convertidas en total desde AGRL.
+    summary_files = list((project / "tool_outputs").glob("nbs_mass_apply_lulc_summary_*.csv"))
+    assert len(summary_files) == 1
+    df = pd.read_csv(summary_files[0])
+    assert df.iloc[0]["source_lulc"] == "AGRL"
+    assert df.iloc[0]["hru_count"] == 2
+    assert df.iloc[0]["area_converted_ha"] == pytest.approx(200.0)
 
 
 def test_mass_apply_skips_subbasin_not_in_project_without_aborting(hidden_root, config, project, monkeypatch) -> None:

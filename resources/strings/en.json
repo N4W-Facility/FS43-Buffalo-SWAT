@@ -542,6 +542,7 @@
   "nbs_tab.apply_summary": "Applied to {applied}/{total} HRU (plant_id={plant_id}, cpnm={cpnm}). See log below for details.",
   "nbs_tab.apply_error": "Could not apply the NbS: {error}",
   "nbs_tab.apply_report_saved": "Report saved: {path}",
+  "nbs_tab.mass_lulc_summary_saved": "LULC conversion summary saved: {path}",
   "nbs_tab.log_line_ok": "[OK] subbasin {subbasin} / HRU {hru}",
   "nbs_tab.log_line_error": "[ERROR] subbasin {subbasin} / HRU {hru}: {error}",
 
@@ -561,6 +562,13 @@
   "nbs_tab.area_apply_title": "Apply an NbS by area",
   "nbs_tab.area_apply_subtitle": "Give a total area (ha) to convert in a subbasin and split it across the source coverages it should come from (e.g. 40% from forest, 60% from pasture). Whole HRUs of each source coverage are selected, by slope/soil priority, until that area is covered.",
   "nbs_tab.area_total_label": "Total area to convert (ha):",
+  "nbs_tab.area_mode_manual": "Manual % per source coverage",
+  "nbs_tab.area_mode_priority": "Priority order (no % needed)",
+  "nbs_tab.area_coverage_priority_label": "Source coverage priority order",
+  "nbs_tab.area_coverage_priority_hint": "Pre-filled from the LULC intervention priority master file for the selected NbS's intent (resources/lulc_intervention_priority/restoration.csv or degradation.csv), filtered to this subbasin's real coverages. Edit freely before applying -- same '>'-separated format as the slope/soil priority fields below. The tool draws whole HRUs from the first listed coverage until it's exhausted, then moves to the next, until the target area is covered.",
+  "nbs_tab.area_recompute_priority_button": "Recompute",
+  "nbs_tab.area_priority_required_error": "Enter a source coverage priority order (or click Recompute) before previewing/applying.",
+  "nbs_tab.mass_coverage_priority_hint": "One shared order for every subbasin in this batch (same criterion as the slope/soil priority fields below) -- pre-filled from the master file against the first subbasin found in this project, filtered per subbasin at apply time to whatever that subbasin actually has. Edit freely before applying.",
   "nbs_tab.area_source_section_label": "Source coverages (must sum to 100%)",
   "nbs_tab.area_coverage_label": "Coverage:",
   "nbs_tab.area_loading_coverages": "Loading source coverages...",
@@ -629,6 +637,10 @@
 
   "nbs_wizard.name_label": "NbS name",
   "nbs_wizard.description_label": "Description (optional)",
+  "nbs_wizard.intent_label": "Intent",
+  "nbs_wizard.intent_hint": "Decides which LULC intervention priority master file to use when applying this NbS by area with a priority order instead of manual % (resources/lulc_intervention_priority/restoration.csv or degradation.csv): restoration starts from the most degraded coverages (e.g. urban/pasture) since restoring means converting degraded land, not healthy forest -- best-quality coverages are only used as a last resort. Degradation starts from the best-quality coverages (e.g. wetlands/forest) since that's what's actually lost in a real degradation -- already-degraded coverages are the last resort.",
+  "nbs_wizard.intent_restoration": "Restoration (start from most degraded coverages)",
+  "nbs_wizard.intent_degradation": "Degradation (start from best-quality coverages)",
   "nbs_wizard.name_required": "Enter a name for this NbS.",
   "nbs_wizard.name_taken": "There is already an NbS named \"{name}\" in this project.",
 
@@ -679,6 +691,7 @@
   "nbs_wizard.ops_remove_button": "Remove",
 
   "nbs_wizard.review_name": "Name: {name}",
+  "nbs_wizard.review_intent": "Intent: {intent}",
   "nbs_wizard.review_target": "Target land cover: {cpnm} — {name}",
   "nbs_wizard.review_mode": "Mode: {mode}",
   "nbs_wizard.review_hru_params": "CANMX={canmx}, OV_N={ov_n}, RSDIN={rsdin}",

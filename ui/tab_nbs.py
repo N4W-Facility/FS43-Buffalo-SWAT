@@ -34,11 +34,20 @@ from config.cpnm_names import name_for
 from config.settings import ConfigManager
 from scenarios.hru_draft import list_subbasin_hru_ids, load_subbasin_hru_files
 from scenarios.nbs import NbSDefinition, delete_definition, load_library
-from scenarios.nbs_apply import NbSApplyHRUResult, NbSApplyReport, apply_nbs, write_apply_report_csv
+from scenarios.nbs_apply import (
+    NbSApplyHRUResult,
+    NbSApplyReport,
+    apply_nbs,
+    write_apply_report_csv,
+    write_mass_apply_lulc_summary_csv,
+)
 from scenarios.nbs_area_apply import (
     AreaAllocationPlan,
+    effective_source_priority,
+    load_intervention_priority,
     parse_priority_text,
     plan_area_allocation,
+    plan_area_allocation_by_priority,
     subbasin_land_uses,
     validate_source_allocations,
 )
@@ -46,8 +55,11 @@ from scenarios.nbs_mass_apply import (
     MassAreaAllocationResult,
     RestorationCsvConversionResult,
     SubbasinAreaAllocation,
+    parse_area_only_csv,
     parse_mass_allocation_csv,
     plan_mass_area_allocation,
+    plan_mass_area_allocation_by_priority,
+    write_area_only_template_csv,
     write_mass_allocation_csv_from_restoration_inputs,
     write_mass_allocation_template_csv,
 )
@@ -105,6 +117,8 @@ class NbSTab(ctk.CTkFrame):
         self._area_source_rows: list[tuple[str, float]] = []
         self._area_coverage_request_id = 0
         self._mass_allocations: dict[int, SubbasinAreaAllocation] = {}
+        self._mass_areas_by_subbasin: dict[int, float] = {}
+        self._mass_apply_plans: list[AreaAllocationPlan] = []
 
         self._disabled_state = self._build_disabled_state()
         self._enabled_state = self._build_enabled_state()
@@ -317,6 +331,7 @@ class NbSTab(ctk.CTkFrame):
         ).pack(anchor="w")
         self._area_nbs_selector = ttk.Combobox(nbs_col, style=style, state="readonly", values=[], width=30)
         self._area_nbs_selector.pack(anchor="w", pady=(4, 0))
+        self._area_nbs_selector.bind("<<ComboboxSelected>>", lambda _e: self._refresh_area_priority_suggestion())
 
         subbasin_col = ctk.CTkFrame(top_row, fg_color="transparent")
         subbasin_col.pack(side="left", padx=(0, 16))
@@ -335,13 +350,29 @@ class NbSTab(ctk.CTkFrame):
         self._area_total_entry = ctk.CTkEntry(total_col, width=100)
         self._area_total_entry.pack(anchor="w", pady=(4, 0))
 
-        ctk.CTkLabel(
-            card, text=self._config.text("nbs_tab.area_source_section_label"),
-            text_color=self._colors.get("text_secondary"), anchor="w",
-        ).grid(row=3, column=0, sticky="w", padx=16, pady=(12, 4))
+        self._area_mode_var = ctk.StringVar(value="manual")
+        mode_row = ctk.CTkFrame(card, fg_color="transparent")
+        mode_row.grid(row=3, column=0, sticky="w", padx=16, pady=(4, 0))
+        ctk.CTkRadioButton(
+            mode_row, text=self._config.text("nbs_tab.area_mode_manual"),
+            variable=self._area_mode_var, value="manual", command=self._on_area_mode_changed,
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkRadioButton(
+            mode_row, text=self._config.text("nbs_tab.area_mode_priority"),
+            variable=self._area_mode_var, value="priority", command=self._on_area_mode_changed,
+        ).pack(side="left")
 
-        add_row = ctk.CTkFrame(card, fg_color="transparent")
-        add_row.grid(row=4, column=0, sticky="ew", padx=16)
+        self._area_manual_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self._area_manual_frame.grid(row=4, column=0, sticky="ew")
+        self._area_manual_frame.columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            self._area_manual_frame, text=self._config.text("nbs_tab.area_source_section_label"),
+            text_color=self._colors.get("text_secondary"), anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
+
+        add_row = ctk.CTkFrame(self._area_manual_frame, fg_color="transparent")
+        add_row.grid(row=1, column=0, sticky="ew", padx=16)
 
         coverage_col = ctk.CTkFrame(add_row, fg_color="transparent")
         coverage_col.pack(side="left", padx=(0, 16))
@@ -376,28 +407,56 @@ class NbSTab(ctk.CTkFrame):
 
         columns = ("coverage", "percent")
         self._area_rows_tree, rows_container = build_scrollable_treeview(
-            card, self._config, columns=columns, height=4, style_prefix="NbSAreaRows"
+            self._area_manual_frame, self._config, columns=columns, height=4, style_prefix="NbSAreaRows"
         )
         self._area_rows_tree.heading("coverage", text=self._config.text("nbs_tab.area_col_coverage"))
         self._area_rows_tree.column("coverage", width=120, anchor="w", stretch=False)
         self._area_rows_tree.heading("percent", text=self._config.text("nbs_tab.area_col_percent"))
         self._area_rows_tree.column("percent", width=100, anchor="e", stretch=False)
-        rows_container.grid(row=5, column=0, sticky="ew", padx=16, pady=(8, 4))
+        rows_container.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 4))
 
         self._area_total_pct_label = ctk.CTkLabel(
-            card, text="", text_color=self._colors.get("text_secondary"), anchor="w"
+            self._area_manual_frame, text="", text_color=self._colors.get("text_secondary"), anchor="w"
         )
-        self._area_total_pct_label.grid(row=6, column=0, sticky="w", padx=16)
+        self._area_total_pct_label.grid(row=3, column=0, sticky="w", padx=16)
+
+        self._area_priority_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self._area_priority_frame.grid(row=4, column=0, sticky="ew")
+        self._area_priority_frame.columnconfigure(0, weight=1)
+        self._area_priority_frame.grid_remove()  # oculto por default (modo "manual")
+
+        ctk.CTkLabel(
+            self._area_priority_frame, text=self._config.text("nbs_tab.area_coverage_priority_label"),
+            text_color=self._colors.get("text_secondary"), anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(12, 0))
+        priority_hint = ctk.CTkLabel(
+            self._area_priority_frame, text=self._config.text("nbs_tab.area_coverage_priority_hint"),
+            text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
+        )
+        priority_hint.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
+        bind_responsive_wraplength(priority_hint)
+        priority_entry_row = ctk.CTkFrame(self._area_priority_frame, fg_color="transparent")
+        priority_entry_row.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 8))
+        priority_entry_row.columnconfigure(0, weight=1)
+        self._area_coverage_priority_entry = ctk.CTkEntry(priority_entry_row)
+        self._area_coverage_priority_entry.grid(row=0, column=0, sticky="ew")
+        self._area_coverage_priority_entry.bind("<KeyRelease>", lambda _e: self._update_area_apply_button_state())
+        ctk.CTkButton(
+            priority_entry_row, text=self._config.text("nbs_tab.area_recompute_priority_button"),
+            fg_color="transparent", border_width=1, border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"), hover_color=self._colors.get("window_bg"),
+            command=self._refresh_area_priority_suggestion, width=110,
+        ).grid(row=0, column=1, sticky="e", padx=(8, 0))
 
         priority_help = ctk.CTkLabel(
             card, text=self._config.text("nbs_tab.area_priority_help"),
             text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
         )
-        priority_help.grid(row=7, column=0, sticky="ew", padx=16, pady=(12, 0))
+        priority_help.grid(row=5, column=0, sticky="ew", padx=16, pady=(12, 0))
         bind_responsive_wraplength(priority_help)
 
         priority_row = ctk.CTkFrame(card, fg_color="transparent")
-        priority_row.grid(row=8, column=0, sticky="ew", padx=16, pady=(4, 4))
+        priority_row.grid(row=6, column=0, sticky="ew", padx=16, pady=(4, 4))
         priority_row.columnconfigure(1, weight=1)
         priority_row.columnconfigure(3, weight=1)
         ctk.CTkLabel(
@@ -414,7 +473,7 @@ class NbSTab(ctk.CTkFrame):
         self._area_soil_entry.grid(row=0, column=3, sticky="ew", padx=(8, 0))
 
         controls = ctk.CTkFrame(card, fg_color="transparent")
-        controls.grid(row=9, column=0, sticky="ew", padx=16, pady=(12, 8))
+        controls.grid(row=7, column=0, sticky="ew", padx=16, pady=(12, 8))
         controls.columnconfigure(0, weight=1)
         self._area_status_label = ctk.CTkLabel(
             controls, text="", text_color=self._colors.get("text_secondary"), anchor="w", justify="left"
@@ -435,8 +494,8 @@ class NbSTab(ctk.CTkFrame):
         self._area_apply_button.grid(row=0, column=2, sticky="e")
 
         log_frame = ctk.CTkFrame(card, fg_color=self._colors.get("surface"))
-        log_frame.grid(row=10, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        card.rowconfigure(10, weight=1)
+        log_frame.grid(row=8, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        card.rowconfigure(8, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
         self._area_log = ctk.CTkTextbox(log_frame, wrap="word", state="disabled", height=100)
@@ -469,9 +528,22 @@ class NbSTab(ctk.CTkFrame):
         ).grid(row=0, column=0, sticky="w")
         self._mass_nbs_selector = ttk.Combobox(nbs_row, style=style, state="readonly", values=[], width=40)
         self._mass_nbs_selector.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        self._mass_nbs_selector.bind("<<ComboboxSelected>>", lambda _e: self._refresh_mass_priority_suggestion())
+
+        self._mass_mode_var = ctk.StringVar(value="manual")
+        mass_mode_row = ctk.CTkFrame(card, fg_color="transparent")
+        mass_mode_row.grid(row=3, column=0, sticky="w", padx=16, pady=(8, 0))
+        ctk.CTkRadioButton(
+            mass_mode_row, text=self._config.text("nbs_tab.area_mode_manual"),
+            variable=self._mass_mode_var, value="manual", command=self._on_mass_mode_changed,
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkRadioButton(
+            mass_mode_row, text=self._config.text("nbs_tab.area_mode_priority"),
+            variable=self._mass_mode_var, value="priority", command=self._on_mass_mode_changed,
+        ).pack(side="left")
 
         csv_row = ctk.CTkFrame(card, fg_color="transparent")
-        csv_row.grid(row=3, column=0, sticky="ew", padx=16, pady=(12, 4))
+        csv_row.grid(row=4, column=0, sticky="ew", padx=16, pady=(12, 4))
         csv_row.columnconfigure(0, weight=1)
         self._mass_csv_field = ReadOnlyField(csv_row, self._config, "nbs_tab.mass_csv_label")
         self._mass_csv_field.grid(row=0, column=0, sticky="ew")
@@ -495,15 +567,43 @@ class NbSTab(ctk.CTkFrame):
         )
         self._mass_load_from_restoration_button.grid(row=0, column=3, sticky="e", padx=(8, 0))
 
+        self._mass_priority_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self._mass_priority_frame.grid(row=5, column=0, sticky="ew")
+        self._mass_priority_frame.columnconfigure(0, weight=1)
+        self._mass_priority_frame.grid_remove()  # oculto por default (modo "manual")
+
+        ctk.CTkLabel(
+            self._mass_priority_frame, text=self._config.text("nbs_tab.area_coverage_priority_label"),
+            text_color=self._colors.get("text_secondary"), anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=(4, 0))
+        mass_priority_hint = ctk.CTkLabel(
+            self._mass_priority_frame, text=self._config.text("nbs_tab.mass_coverage_priority_hint"),
+            text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
+        )
+        mass_priority_hint.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 4))
+        bind_responsive_wraplength(mass_priority_hint)
+        mass_priority_entry_row = ctk.CTkFrame(self._mass_priority_frame, fg_color="transparent")
+        mass_priority_entry_row.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 8))
+        mass_priority_entry_row.columnconfigure(0, weight=1)
+        self._mass_coverage_priority_entry = ctk.CTkEntry(mass_priority_entry_row)
+        self._mass_coverage_priority_entry.grid(row=0, column=0, sticky="ew")
+        self._mass_coverage_priority_entry.bind("<KeyRelease>", lambda _e: self._update_mass_apply_button_state())
+        ctk.CTkButton(
+            mass_priority_entry_row, text=self._config.text("nbs_tab.area_recompute_priority_button"),
+            fg_color="transparent", border_width=1, border_color=self._colors.get("border"),
+            text_color=self._colors.get("text_primary"), hover_color=self._colors.get("window_bg"),
+            command=self._refresh_mass_priority_suggestion, width=110,
+        ).grid(row=0, column=1, sticky="e", padx=(8, 0))
+
         priority_help = ctk.CTkLabel(
             card, text=self._config.text("nbs_tab.mass_priority_help"),
             text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
         )
-        priority_help.grid(row=4, column=0, sticky="ew", padx=16, pady=(12, 0))
+        priority_help.grid(row=6, column=0, sticky="ew", padx=16, pady=(12, 0))
         bind_responsive_wraplength(priority_help)
 
         priority_row = ctk.CTkFrame(card, fg_color="transparent")
-        priority_row.grid(row=5, column=0, sticky="ew", padx=16, pady=(4, 4))
+        priority_row.grid(row=7, column=0, sticky="ew", padx=16, pady=(4, 4))
         priority_row.columnconfigure(1, weight=1)
         priority_row.columnconfigure(3, weight=1)
         ctk.CTkLabel(
@@ -529,14 +629,14 @@ class NbSTab(ctk.CTkFrame):
             card, height=3, corner_radius=1,
             fg_color=self._colors.get("border"), progress_color=self._colors.get("accent"),
         )
-        self._mass_progress_bar.grid(row=6, column=0, sticky="ew", padx=16, pady=(12, 0))
+        self._mass_progress_bar.grid(row=8, column=0, sticky="ew", padx=16, pady=(12, 0))
         self._mass_progress_bar.grid_remove()
         self._mass_progress_animation_running = False
         self._mass_progress_value = _PROGRESS_MIN
         self._mass_progress_direction = 1
 
         controls = ctk.CTkFrame(card, fg_color="transparent")
-        controls.grid(row=7, column=0, sticky="ew", padx=16, pady=(8, 8))
+        controls.grid(row=9, column=0, sticky="ew", padx=16, pady=(8, 8))
         controls.columnconfigure(0, weight=1)
         self._mass_status_label = ctk.CTkLabel(
             controls, text="", text_color=self._colors.get("text_secondary"), anchor="w", justify="left"
@@ -557,8 +657,8 @@ class NbSTab(ctk.CTkFrame):
         self._mass_apply_button.grid(row=0, column=2, sticky="e")
 
         log_frame = ctk.CTkFrame(card, fg_color=self._colors.get("surface"))
-        log_frame.grid(row=8, column=0, sticky="nsew", padx=16, pady=(0, 16))
-        card.rowconfigure(8, weight=1)
+        log_frame.grid(row=10, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        card.rowconfigure(10, weight=1)
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
         self._mass_log = ctk.CTkTextbox(log_frame, wrap="word", state="disabled", height=140)
@@ -571,6 +671,8 @@ class NbSTab(ctk.CTkFrame):
         self._targets = []
         self._area_source_rows = []
         self._mass_allocations = {}
+        self._mass_areas_by_subbasin = {}
+        self._mass_apply_plans = []
         self._enabled_state.pack(fill="both", expand=True)
         self._disabled_state.pack_forget()
 
@@ -836,6 +938,52 @@ class NbSTab(ctk.CTkFrame):
         self._area_source_rows = []
         self._refresh_area_rows_tree()
         self._refresh_area_coverage_options()
+        self._refresh_area_priority_suggestion()
+
+    def _on_area_mode_changed(self) -> None:
+        if self._area_mode_var.get() == "priority":
+            self._area_manual_frame.grid_remove()
+            self._area_priority_frame.grid()
+            self._refresh_area_priority_suggestion()
+        else:
+            self._area_priority_frame.grid_remove()
+            self._area_manual_frame.grid()
+        self._update_area_apply_button_state()
+
+    def _refresh_area_priority_suggestion(self) -> None:
+        """Pre-llena el campo de orden de prioridad con
+        effective_source_priority (archivo maestro + intent de la NbS
+        elegida + coberturas reales de la subcuenca elegida) -- pedido
+        explícito del usuario: mostrado y editable, nunca aplicado en
+        silencio. No hace nada si falta elegir NbS/subcuenca todavía, o si
+        el modo actual no es "priority" (evita trabajo/parseo .hru
+        innecesario mientras el usuario está en modo manual)."""
+        if self._area_mode_var.get() != "priority" or self._project_dir is None:
+            return
+        if not self._area_subbasin_selector.get() or not self._area_nbs_selector.get():
+            return
+
+        definition = next(
+            (d for d in load_library(self._project_dir) if d.name == self._area_nbs_selector.get()), None
+        )
+        if definition is None:
+            return
+        subbasin_id = int(self._area_subbasin_selector.get())
+        project_dir = self._project_dir
+
+        def work(_report_progress):
+            hru_files = load_subbasin_hru_files(project_dir / "TxtInOut", subbasin_id)
+            return set(subbasin_land_uses(hru_files))
+
+        def on_done(real_land_uses: set[str]) -> None:
+            order = effective_source_priority(
+                load_intervention_priority(definition.intent), real_land_uses, definition.target_lulc
+            )
+            self._area_coverage_priority_entry.delete(0, "end")
+            self._area_coverage_priority_entry.insert(0, ">".join(order))
+            self._update_area_apply_button_state()
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=lambda _e: None)
 
     def _refresh_area_coverage_options(self) -> None:
         self._area_coverage_request_id += 1
@@ -948,13 +1096,18 @@ class NbSTab(ctk.CTkFrame):
         self._update_area_apply_button_state()
 
     def _update_area_apply_button_state(self) -> None:
-        """Habilita 'Apply by area' solo cuando el % acumulado de coberturas
-        fuente llega a 100 (misma tolerancia que valida el backend) --
+        """Habilita 'Apply by area' solo cuando la configuración del modo
+        activo está completa: en modo manual, el % acumulado de coberturas
+        fuente debe llegar a 100 (misma tolerancia que valida el backend,
         pedido explícito del usuario, 2026-08-12: antes solo se avisaba con
         el color de la etiqueta y el click fallaba recién al intentar
-        calcular el plan."""
-        total = sum(pct for _, pct in self._area_source_rows)
-        complete = abs(total - 100) <= _AREA_PCT_SUM_TOLERANCE
+        calcular el plan); en modo priority, alcanza con que el campo de
+        orden de prioridad no esté vacío."""
+        if self._area_mode_var.get() == "priority":
+            complete = bool(self._area_coverage_priority_entry.get().strip())
+        else:
+            total = sum(pct for _, pct in self._area_source_rows)
+            complete = abs(total - 100) <= _AREA_PCT_SUM_TOLERANCE
         self._area_apply_button.configure(state="normal" if complete else "disabled")
 
     def _run_area_plan(self, on_ready: Callable[[NbSDefinition, AreaAllocationPlan], None]) -> None:
@@ -980,10 +1133,20 @@ class NbSTab(ctk.CTkFrame):
             return
         subbasin_id = int(self._area_subbasin_selector.get())
 
-        errors = validate_source_allocations(self._area_source_rows)
-        if errors:
-            self._area_status_label.configure(text=" ".join(errors), text_color=self._colors.get("error"))
-            return
+        priority_mode = self._area_mode_var.get() == "priority"
+        coverage_priority: list[str] = []
+        if priority_mode:
+            coverage_priority = parse_priority_text(self._area_coverage_priority_entry.get()) or []
+            if not coverage_priority:
+                self._area_status_label.configure(
+                    text=self._config.text("nbs_tab.area_priority_required_error"), text_color=self._colors.get("error")
+                )
+                return
+        else:
+            errors = validate_source_allocations(self._area_source_rows)
+            if errors:
+                self._area_status_label.configure(text=" ".join(errors), text_color=self._colors.get("error"))
+                return
 
         try:
             total_area_ha = float(self._area_total_entry.get())
@@ -1013,6 +1176,14 @@ class NbSTab(ctk.CTkFrame):
             if sub_entry is None:
                 return None
             subbasin_area_ha = parse_sub_file(sub_entry.sub_file, subbasin_id).area_km2 * 100
+            if priority_mode:
+                real_land_uses = set(subbasin_land_uses(hru_files))
+                priority_here = [lulc for lulc in coverage_priority if lulc in real_land_uses]
+                return plan_area_allocation_by_priority(
+                    subbasin_id, hru_files, subbasin_area_ha,
+                    total_area_ha=total_area_ha, coverage_priority=priority_here,
+                    slope_priority=slope_priority, soil_priority=soil_priority,
+                )
             return plan_area_allocation(
                 subbasin_id, hru_files, subbasin_area_ha,
                 total_area_ha=total_area_ha, source_allocations=source_allocations,
@@ -1142,6 +1313,56 @@ class NbSTab(ctk.CTkFrame):
 
     # -- aplicar NbS por área masiva (todas las subcuencas, hilo de fondo) ----------
 
+    def _on_mass_mode_changed(self) -> None:
+        priority_mode = self._mass_mode_var.get() == "priority"
+        if priority_mode:
+            self._mass_priority_frame.grid()
+            self._refresh_mass_priority_suggestion()
+        else:
+            self._mass_priority_frame.grid_remove()
+        # "Load from Restoration Inputs..." deriva % de un cruce raster --
+        # no tiene sentido en modo priority (acá no hay % que derivar).
+        self._mass_load_from_restoration_button.configure(state="disabled" if priority_mode else "normal")
+        self._update_mass_apply_button_state()
+
+    def _refresh_mass_priority_suggestion(self) -> None:
+        """Pre-llena el campo de orden de prioridad global del batch --
+        mismo criterio que _refresh_area_priority_suggestion, pero contra
+        una única subcuenca representativa (la primera real del proyecto,
+        mismo criterio de "primera encontrada" que discover_hru_group_options
+        ya usa en scenarios.comparison_export) en vez de la subcuenca
+        elegida en un selector puntual, ya que acá la lista se comparte
+        para todo el batch."""
+        if self._mass_mode_var.get() != "priority" or self._project_dir is None:
+            return
+        if not self._mass_nbs_selector.get():
+            return
+
+        definition = next(
+            (d for d in load_library(self._project_dir) if d.name == self._mass_nbs_selector.get()), None
+        )
+        if definition is None:
+            return
+        project_dir = self._project_dir
+
+        def work(_report_progress):
+            txtinout_dir = project_dir / "TxtInOut"
+            subbasins = sorted(s.subbasin_id for s in discover_subbasins(txtinout_dir))
+            if not subbasins:
+                return set()
+            hru_files = load_subbasin_hru_files(txtinout_dir, subbasins[0])
+            return set(subbasin_land_uses(hru_files))
+
+        def on_done(real_land_uses: set[str]) -> None:
+            order = effective_source_priority(
+                load_intervention_priority(definition.intent), real_land_uses, definition.target_lulc
+            )
+            self._mass_coverage_priority_entry.delete(0, "end")
+            self._mass_coverage_priority_entry.insert(0, ">".join(order))
+            self._update_mass_apply_button_state()
+
+        run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=lambda _e: None)
+
     def _on_mass_download_template_clicked(self) -> None:
         if self._project_dir is None:
             return
@@ -1164,6 +1385,7 @@ class NbSTab(ctk.CTkFrame):
         project_dir = self._project_dir
         destination = Path(path)
         target_lulc = definition.target_lulc
+        priority_mode = self._mass_mode_var.get() == "priority"
 
         self._set_mass_controls_enabled(False)
         self._mass_status_label.configure(
@@ -1173,6 +1395,8 @@ class NbSTab(ctk.CTkFrame):
         self._on_run_state_changed(True)
 
         def work(_report_progress):
+            if priority_mode:
+                return write_area_only_template_csv(project_dir / "TxtInOut", destination)
             return write_mass_allocation_template_csv(project_dir / "TxtInOut", destination, target_lulc)
 
         def on_done(result_path: Path) -> None:
@@ -1225,7 +1449,10 @@ class NbSTab(ctk.CTkFrame):
         state = "normal" if enabled else "disabled"
         self._mass_download_button.configure(state=state)
         self._mass_load_csv_button.configure(state=state)
-        self._mass_load_from_restoration_button.configure(state=state)
+        # En modo priority ese botón queda deshabilitado a propósito (ver
+        # _on_mass_mode_changed) -- no reactivarlo acá si es el caso.
+        restoration_state = state if (enabled and self._mass_mode_var.get() != "priority") else "disabled"
+        self._mass_load_from_restoration_button.configure(state=restoration_state)
         if enabled:
             self._update_mass_apply_button_state()
         else:
@@ -1236,7 +1463,34 @@ class NbSTab(ctk.CTkFrame):
         path = filedialog.askopenfilename(filetypes=[("CSV", "*.csv")])
         if not path:
             return
-        self._load_mass_allocations_from_csv(Path(path))
+        if self._mass_mode_var.get() == "priority":
+            self._load_mass_areas_from_csv(Path(path))
+        else:
+            self._load_mass_allocations_from_csv(Path(path))
+
+    def _load_mass_areas_from_csv(self, path: Path) -> None:
+        """Equivalente de _load_mass_allocations_from_csv para el modo por
+        orden de prioridad: parse_area_only_csv en vez de
+        parse_mass_allocation_csv (sin columnas de cobertura)."""
+        try:
+            areas, errors = parse_area_only_csv(path)
+        except ValueError as error:
+            self._mass_status_label.configure(
+                text=self._config.text("nbs_tab.apply_error").format(error=str(error)),
+                text_color=self._colors.get("error"),
+            )
+            return
+
+        self._mass_areas_by_subbasin = areas
+        self._mass_csv_field.set_value(str(path))
+        self._mass_status_label.configure(
+            text=self._config.text("nbs_tab.mass_load_csv_success").format(count=len(areas)),
+            text_color=self._colors.get("success") if not errors else self._colors.get("warning"),
+        )
+        self._set_mass_log(
+            "\n".join(self._config.text("nbs_tab.mass_load_csv_error_line").format(error=e) for e in errors)
+        )
+        self._update_mass_apply_button_state()
 
     def _load_mass_allocations_from_csv(self, path: Path, *, extra_log_lines: list[str] | None = None) -> None:
         """Parsea ``path`` con parse_mass_allocation_csv y lo deja como el
@@ -1333,9 +1587,12 @@ class NbSTab(ctk.CTkFrame):
         run_in_background(self, work, on_progress=lambda _m: None, on_done=on_done, on_error=on_error)
 
     def _update_mass_apply_button_state(self) -> None:
-        has_allocations = bool(self._mass_allocations)
-        self._mass_preview_button.configure(state="normal" if has_allocations else "disabled")
-        self._mass_apply_button.configure(state="normal" if has_allocations else "disabled")
+        if self._mass_mode_var.get() == "priority":
+            ready = bool(self._mass_areas_by_subbasin) and bool(self._mass_coverage_priority_entry.get().strip())
+        else:
+            ready = bool(self._mass_allocations)
+        self._mass_preview_button.configure(state="normal" if ready else "disabled")
+        self._mass_apply_button.configure(state="normal" if ready else "disabled")
 
     def _run_mass_plan(self, on_ready: Callable[[NbSDefinition, MassAreaAllocationResult], None]) -> None:
         """Mismo motivo que _run_area_plan para correr en hilo de fondo:
@@ -1343,7 +1600,9 @@ class NbSTab(ctk.CTkFrame):
         subcuenca del CSV, y con un modelo real eso puede tardar lo
         suficiente como para congelar la ventana si corriera en el hilo de
         UI."""
-        if self._project_dir is None or not self._mass_allocations:
+        priority_mode = self._mass_mode_var.get() == "priority"
+        has_input = bool(self._mass_areas_by_subbasin) if priority_mode else bool(self._mass_allocations)
+        if self._project_dir is None or not has_input:
             return
 
         name = self._mass_nbs_selector.get()
@@ -1355,8 +1614,18 @@ class NbSTab(ctk.CTkFrame):
             )
             return
 
+        coverage_priority: list[str] = []
+        if priority_mode:
+            coverage_priority = parse_priority_text(self._mass_coverage_priority_entry.get()) or []
+            if not coverage_priority:
+                self._mass_status_label.configure(
+                    text=self._config.text("nbs_tab.area_priority_required_error"), text_color=self._colors.get("error")
+                )
+                return
+
         project_dir = self._project_dir
         allocations = dict(self._mass_allocations)
+        areas_by_subbasin = dict(self._mass_areas_by_subbasin)
         slope_priority = parse_priority_text(self._mass_slope_entry.get())
         soil_priority = parse_priority_text(self._mass_soil_entry.get())
 
@@ -1368,6 +1637,12 @@ class NbSTab(ctk.CTkFrame):
         self._start_mass_progress()
 
         def work(_report_progress):
+            if priority_mode:
+                return plan_mass_area_allocation_by_priority(
+                    project_dir, areas_by_subbasin, coverage_priority,
+                    target_lulc=definition.target_lulc,
+                    slope_priority=slope_priority, soil_priority=soil_priority,
+                )
             return plan_mass_area_allocation(
                 project_dir, allocations, slope_priority=slope_priority, soil_priority=soil_priority
             )
@@ -1459,6 +1734,10 @@ class NbSTab(ctk.CTkFrame):
         message = self._config.text("nbs_tab.mass_confirm_apply").format(
             name=definition.name, count=len(targets), subbasins=len(result.plans)
         )
+        # Guardado para el resumen por cobertura LULC que escribe
+        # _on_mass_apply_done al terminar -- esa información (qué cobertura
+        # fuente le dio cada HRU) solo vive en el plan, no en NbSApplyReport.
+        self._mass_apply_plans = result.plans
         ConfirmDialog(self, self._config, message=message, on_confirm=lambda: self._start_mass_apply(definition, targets))
 
     def _start_mass_apply(self, definition: NbSDefinition, targets: list[tuple[int, int]]) -> None:
@@ -1496,7 +1775,13 @@ class NbSTab(ctk.CTkFrame):
             text_color=self._colors.get("success") if report.error_count == 0 else self._colors.get("warning"),
         )
         csv_path = self._write_apply_report(report)
-        lines = [self._config.text("nbs_tab.apply_report_saved").format(path=csv_path)]
+        lulc_summary_path = write_mass_apply_lulc_summary_csv(
+            self._project_dir, self._mass_apply_plans, report, datetime.now()
+        )
+        lines = [
+            self._config.text("nbs_tab.apply_report_saved").format(path=csv_path),
+            self._config.text("nbs_tab.mass_lulc_summary_saved").format(path=lulc_summary_path),
+        ]
         lines.extend(self._format_apply_log_line(result) for result in report.results)
         self._set_mass_log("\n".join(lines))
         self._finish_mass_apply()

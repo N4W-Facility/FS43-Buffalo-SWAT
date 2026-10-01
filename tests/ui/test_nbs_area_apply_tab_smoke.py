@@ -187,6 +187,39 @@ def test_area_apply_writes_real_hru_mgt_files_for_selected_hrus(hidden_root, con
         assert hru_file.get_value("CANMX") == 3.0
 
 
+def test_area_apply_priority_mode_prefills_order_and_selects_hrus(hidden_root, config, project, monkeypatch) -> None:
+    add_or_replace(
+        project,
+        NbSDefinition(
+            name="Restore forest", target_lulc="FRST", new_coverage=None,
+            hru_params={"CANMX": 3.0, "OV_N": 0.12}, mgt_initial={"IGRO": 0}, cn2_by_hsg={"C": 88.33}, operations=[],
+            intent="restoration",
+        ),
+    )
+
+    _install_synchronous_mocks(monkeypatch)
+
+    tab = NbSTab(hidden_root, config)
+    tab.set_project(project)
+    tab._area_nbs_selector.current(0)
+
+    tab._area_mode_var.set("priority")
+    tab._on_area_mode_changed()
+
+    # AGRL es la única cobertura real de la subcuenca (ver fixture) -- el
+    # campo se pre-llena solo, sin que el usuario haya tipeado nada.
+    assert tab._area_coverage_priority_entry.get() == "AGRL"
+
+    tab._area_total_entry.insert(0, "80")
+    captured = []
+    tab._run_area_plan(lambda definition, plan: captured.append((definition, plan)))
+
+    assert captured
+    _definition, plan = captured[0]
+    assert plan.targets == [(1, 1), (1, 2)]
+    assert plan.by_source[0].source_lulc == "AGRL"
+
+
 def test_area_apply_reports_deficit_without_aborting_when_not_enough_source_area(
     hidden_root, config, project, monkeypatch
 ) -> None:

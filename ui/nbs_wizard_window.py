@@ -109,6 +109,7 @@ class NbSWizardWindow(ctk.CTkToplevel):
         self._state: dict = {
             "name": "",
             "description": "",
+            "intent": "restoration",
             "coverage_mode": "existing",
             "target_cpnm": "",
             "new_idc": 7,
@@ -121,6 +122,7 @@ class NbSWizardWindow(ctk.CTkToplevel):
         if existing is not None:
             self._state["name"] = existing.name
             self._state["description"] = existing.description
+            self._state["intent"] = existing.intent
             self._state["coverage_mode"] = "new" if existing.new_coverage is not None else "existing"
             self._state["target_cpnm"] = existing.target_lulc
             if existing.new_coverage is not None:
@@ -262,7 +264,30 @@ class NbSWizardWindow(ctk.CTkToplevel):
         desc_label.grid(row=2, column=0, sticky="w")
         self._description_text = ctk.CTkTextbox(self._content, height=120)
         self._description_text.insert("1.0", self._state["description"])
-        self._description_text.grid(row=3, column=0, sticky="ew")
+        self._description_text.grid(row=3, column=0, sticky="ew", pady=(4, 16))
+
+        intent_label = ctk.CTkLabel(
+            self._content, text=self._config.text("nbs_wizard.intent_label"),
+            text_color=self._colors.get("text_secondary"), anchor="w",
+        )
+        intent_label.grid(row=4, column=0, sticky="w")
+        intent_hint = ctk.CTkLabel(
+            self._content, text=self._config.text("nbs_wizard.intent_hint"),
+            text_color=self._colors.get("text_secondary"), anchor="w", justify="left",
+            wraplength=self._content_wraplength(),
+        )
+        intent_hint.grid(row=5, column=0, sticky="w", pady=(0, 4))
+        self._intent_var = ctk.StringVar(value=self._state["intent"])
+        intent_frame = ctk.CTkFrame(self._content, fg_color="transparent")
+        intent_frame.grid(row=6, column=0, sticky="w")
+        ctk.CTkRadioButton(
+            intent_frame, text=self._config.text("nbs_wizard.intent_restoration"),
+            variable=self._intent_var, value="restoration",
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkRadioButton(
+            intent_frame, text=self._config.text("nbs_wizard.intent_degradation"),
+            variable=self._intent_var, value="degradation",
+        ).pack(side="left")
 
     def _collect_step_name(self) -> bool:
         name = self._name_entry.get().strip()
@@ -275,6 +300,7 @@ class NbSWizardWindow(ctk.CTkToplevel):
             return False
         self._state["name"] = name
         self._state["description"] = self._description_text.get("1.0", "end").strip()
+        self._state["intent"] = self._intent_var.get()
         return True
 
     # -- paso: cobertura ------------------------------------------------------
@@ -817,8 +843,14 @@ class NbSWizardWindow(ctk.CTkToplevel):
             if self._state["coverage_mode"] == "new"
             else self._config.text("nbs_wizard.coverage_existing")
         )
+        intent_label = (
+            self._config.text("nbs_wizard.intent_degradation")
+            if self._state["intent"] == "degradation"
+            else self._config.text("nbs_wizard.intent_restoration")
+        )
         lines = [
             self._config.text("nbs_wizard.review_name").format(name=self._state["name"]),
+            self._config.text("nbs_wizard.review_intent").format(intent=intent_label),
             self._config.text("nbs_wizard.review_target").format(
                 cpnm=self._state["target_cpnm"], name=name_for(self._state["target_cpnm"])
             ),
@@ -859,6 +891,7 @@ class NbSWizardWindow(ctk.CTkToplevel):
             cn2_by_hsg=dict(self._state["cn2_by_hsg"]),
             operations=list(self._state["operations"]),
             description=self._state["description"],
+            intent=self._state["intent"],
         )
 
         real_land_uses = set(discover_non_plant_land_uses(self._txtinout_dir, self._plant_dat))
