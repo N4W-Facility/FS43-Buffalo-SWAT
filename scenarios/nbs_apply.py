@@ -68,6 +68,7 @@ import pandas as pd
 from scenarios.activity_log import log_action
 from scenarios.hru_draft import list_subbasin_hru_files
 from scenarios.nbs_analysis import discover_non_plant_land_uses
+from scenarios.nbs_area_apply import AreaAllocationPlan
 from swat_io.common.atomic_write import atomic_write_bytes
 from swat_io.discovery import discover_subbasins
 from swat_io.hru.models import HRURawLine
@@ -530,5 +531,61 @@ def write_apply_report_csv(project_dir: str | Path, report: NbSApplyReport, appl
     safe_name = _APPLY_REPORT_NAME_RE.sub("_", report.nbs_name).strip("_") or "nbs"
     timestamp = applied_at.strftime("%Y%m%d_%H%M%S")
     csv_path = tool_outputs_dir(project_dir) / f"nbs_apply_report_{safe_name}_{timestamp}.csv"
+    df.to_csv(csv_path, index=False)
+    return csv_path
+
+
+def write_mass_apply_lulc_summary_csv(
+    project_dir: str | Path, plans: list[AreaAllocationPlan], report: NbSApplyReport, applied_at: datetime
+) -> Path:
+    """Escribe un CSV en tool_outputs/ con una fila por cobertura fuente y
+    el área TOTAL REALMENTE convertida (ha) en toda la aplicación -- pedido
+    explícito del usuario, 2026-09-30, para "Apply an NbS by area (all
+    subbasins)": un resumen por clase LULC, no por HRU (eso ya lo cubre
+    write_apply_report_csv).
+
+    No es el área planeada (``AreaAllocationPlan.by_source[].selected_ha``,
+    calculada antes de escribir nada): se recalcula sumando
+    ``hru_fr * área real de esa subcuenca`` solo de las HRU que
+    ``report.results`` marca ``status="applied"`` -- una HRU seleccionada
+    por el plan puede fallar al escribirse de verdad (HSG sin CN2,
+    validación .hru, error de E/S, ver ``apply_nbs``), y esa área no debe
+    contarse como convertida. ``plans`` (una lista, una por subcuenca) es
+    de dónde sale qué cobertura fuente le dio cada HRU -- esa información
+    no vive en ``NbSApplyReport``."""
+    source_by_target: dict[tuple[int, int], str] = {
+        (plan.subbasin, hru_id): source.source_lulc
+        for plan in plans
+        for source in plan.by_source
+        for hru_id in source.selected_hru_ids
+    }
+
+    txtinout_dir = Path(project_dir) / "TxtInOut"
+    subbasin_ids = {r.subbasin for r in report.results}
+    area_by_subbasin = _subbasin_area_ha_by_id(txtinout_dir, subbasin_ids)
+
+    area_by_lulc: dict[str, float] = {}
+    hru_count_by_lulc: dict[str, int] = {}
+    for r in report.results:
+        if r.status != "applied" or r.hru_fr is None:
+            continue
+        source_lulc = source_by_target.get((r.subbasin, r.hru))
+        if source_lulc is None:
+            continue
+        subbasin_area_ha = area_by_subbasin.get(r.subbasin)
+        if subbasin_area_ha is None:
+            continue
+        area_by_lulc[source_lulc] = area_by_lulc.get(source_lulc, 0.0) + r.hru_fr * subbasin_area_ha
+        hru_count_by_lulc[source_lulc] = hru_count_by_lulc.get(source_lulc, 0) + 1
+
+    rows = [
+        {"source_lulc": lulc, "hru_count": hru_count_by_lulc[lulc], "area_converted_ha": round(area, 3)}
+        for lulc, area in sorted(area_by_lulc.items())
+    ]
+    df = pd.DataFrame(rows, columns=["source_lulc", "hru_count", "area_converted_ha"])
+
+    safe_name = _APPLY_REPORT_NAME_RE.sub("_", report.nbs_name).strip("_") or "nbs"
+    timestamp = applied_at.strftime("%Y%m%d_%H%M%S")
+    csv_path = tool_outputs_dir(project_dir) / f"nbs_mass_apply_lulc_summary_{safe_name}_{timestamp}.csv"
     df.to_csv(csv_path, index=False)
     return csv_path

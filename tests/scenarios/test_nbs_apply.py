@@ -16,7 +16,9 @@ from scenarios.nbs_apply import (
     sync_new_coverage_to_plant_dat,
     validate_nbs_definition,
     write_apply_report_csv,
+    write_mass_apply_lulc_summary_csv,
 )
+from scenarios.nbs_area_apply import AreaAllocationPlan, SourceAllocationResult
 from swat_io.plant.parser import parse_plant_dat_file
 from tests.helpers import write_synthetic_sub
 
@@ -198,6 +200,63 @@ def test_apply_report_csv_blank_area_when_sub_file_missing(tmp_path: Path) -> No
     df = pd.read_csv(csv_path)
     assert df.iloc[0]["hru_fr"] == pytest.approx(0.75)
     assert pd.isna(df.iloc[0]["hru_area_ha"])
+
+
+# -- write_mass_apply_lulc_summary_csv -------------------------------------------
+
+
+def test_mass_apply_lulc_summary_sums_area_by_source_coverage(project: Path) -> None:
+    # Subcuenca 1: 1000 ha reales (ver fixture), HRU 1 (AGRL) con HRU_FR
+    # 0.75 -> 750 ha convertidas desde AGRL.
+    report = apply_nbs(project, _forest_nbs_existing(), [(1, 1)])
+    plan = AreaAllocationPlan(
+        subbasin=1, total_area_ha=750.0, subbasin_area_ha=1000.0,
+        by_source=[SourceAllocationResult(source_lulc="AGRL", requested_ha=750.0, selected_ha=750.0, selected_hru_ids=[1])],
+    )
+
+    csv_path = write_mass_apply_lulc_summary_csv(project, [plan], report, datetime(2026, 9, 30, 10, 0, 0))
+
+    df = pd.read_csv(csv_path)
+    assert list(df.columns) == ["source_lulc", "hru_count", "area_converted_ha"]
+    assert df.iloc[0]["source_lulc"] == "AGRL"
+    assert df.iloc[0]["hru_count"] == 1
+    assert df.iloc[0]["area_converted_ha"] == pytest.approx(750.0)
+
+
+def test_mass_apply_lulc_summary_excludes_hru_that_errored(tmp_path: Path) -> None:
+    # HRU 2 tiene HSG "X", sin CN2 definido en _forest_nbs_existing -- debe
+    # fallar al aplicarse (status="error") y no debe contarse como área
+    # convertida, aunque el plan la haya seleccionado.
+    txtinout = tmp_path / "TxtInOut"
+    txtinout.mkdir()
+    (txtinout / "plant.dat").write_text(_PLANT_DAT, encoding="utf-8", newline="")
+    (txtinout / "000010001.hru").write_text(_HRU, encoding="utf-8")
+    (txtinout / "000010001.mgt").write_text(_MGT, encoding="utf-8")
+    (txtinout / "000010001.sol").write_text(_SOL, encoding="utf-8")
+    (txtinout / "000010002.hru").write_text(_HRU.replace("Hru:1", "Hru:2"), encoding="utf-8")
+    (txtinout / "000010002.mgt").write_text(_MGT.replace("HRU:1", "HRU:2"), encoding="utf-8")
+    (txtinout / "000010002.sol").write_text(
+        " .Sol file HRU:2 Subbasin:1 HRU:2 Luse:AGRL\n Soil Name: Test\n Soil Hydrologic Group: X\n",
+        encoding="utf-8",
+    )
+    write_synthetic_sub(txtinout / "000010000.sub", area_km2=10.0)
+    (txtinout / "000010000.pnd").write_text("", encoding="utf-8")
+
+    report = apply_nbs(tmp_path, _forest_nbs_existing(), [(1, 1), (1, 2)])
+    assert report.applied_count == 1
+    assert report.error_count == 1
+
+    plan = AreaAllocationPlan(
+        subbasin=1, total_area_ha=1500.0, subbasin_area_ha=1000.0,
+        by_source=[SourceAllocationResult(source_lulc="AGRL", requested_ha=1500.0, selected_ha=1500.0, selected_hru_ids=[1, 2])],
+    )
+
+    csv_path = write_mass_apply_lulc_summary_csv(tmp_path, [plan], report, datetime(2026, 9, 30, 10, 0, 0))
+
+    df = pd.read_csv(csv_path)
+    assert len(df) == 1
+    assert df.iloc[0]["hru_count"] == 1  # solo la HRU 1, la 2 falló
+    assert df.iloc[0]["area_converted_ha"] == pytest.approx(750.0)
 
 
 _RFOR_PHYSIOLOGY = {
